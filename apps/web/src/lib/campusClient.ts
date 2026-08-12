@@ -1,6 +1,7 @@
 import type {
   ClientMessage,
   JoinOptions,
+  MediaAccessSnapshot,
   MovementInput,
   ServerMessage,
   WorldStateSnapshot,
@@ -13,6 +14,7 @@ type LeaveListener = () => void;
 
 export type CampusConnection = {
   sessionId: string;
+  media: MediaAccessSnapshot;
   onStateChange: (listener: StateListener) => () => void;
   onLeave: (listener: LeaveListener) => () => void;
   sendMovement: (input: MovementInput) => void;
@@ -53,6 +55,7 @@ export async function joinCampus(
 
     const connection: CampusConnection = {
       sessionId: "",
+      media: { available: false, reason: "not_configured" },
       onStateChange(listener) {
         stateListeners.add(listener);
         return () => stateListeners.delete(listener);
@@ -86,6 +89,7 @@ export async function joinCampus(
       if (message.type === "welcome") {
         connected = true;
         connection.sessionId = message.sessionId;
+        connection.media = message.media;
 
         if (!settled) {
           settled = true;

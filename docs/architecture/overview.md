@@ -5,6 +5,7 @@ apps/web          React + Vite + Phaser
 apps/server       Node + WebSocket
 packages/contracts Tipos e mensagens compartilhadas
 packages/game-core Regras puras de mapa, movimento, colisão e proximidade
+LiveKit local      SFU WebRTC exclusivo para mídia
 ```
 
 O cliente envia perfil e entradas de movimento para o servidor. O servidor valida o protocolo,
@@ -14,6 +15,16 @@ recebe um snapshot personalizado com `serverTick`, jogadores e sua própria vis�
 O frontend renderiza o estado recebido no Phaser. O cliente não decide posição nem proximidade;
 ele envia intenção de movimento e renova essa intenção por heartbeat. Se a renovação parar, o
 servidor expira a entrada e imobiliza o avatar.
+
+## Mídia
+
+O WebSocket do mundo e o WebRTC são conexões independentes. Ao entrar, o backend pode emitir um
+token LiveKit temporário cuja identidade é o `sessionId`. O navegador conecta sem publicar
+microfone e com `autoSubscribe: false`.
+
+O snapshot de proximidade controla quais publicações remotas são assinadas e o ganho de cada
+microfone. O Phaser não conhece mídia; `apps/web/src/media` encapsula LiveKit e React apresenta
+consentimento, mute, autoplay, reconexão e erro. Falha da mídia não afeta movimento ou mapa.
 
 ## Mundo pixel art
 

@@ -6,9 +6,11 @@
   "packageManager": "pnpm@11.2.2",
   "scripts": {
     "dev": "pnpm --parallel --filter @ig-campus/server --filter @ig-campus/web dev",
+    "media:up": "docker compose up -d livekit",
+    "media:down": "docker compose down",
     "build": "pnpm --filter @ig-campus/contracts build && pnpm --filter @ig-campus/game-core build && pnpm --filter @ig-campus/server build && pnpm --filter @ig-campus/web build",
     "typecheck": "pnpm -r --if-present typecheck",
-    "test": "pnpm --filter @ig-campus/server test",
+    "test": "pnpm --filter @ig-campus/server test && pnpm --filter @ig-campus/web test",
     "assets:generate": "node scripts/generate-pixel-assets.mjs",
     "lint": "biome check .",
     "format": "biome format --write ."

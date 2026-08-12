@@ -64,6 +64,20 @@ export type WorldStateSnapshot = {
 
 export type ConnectionStatus = "connecting" | "connected" | "offline" | "error";
 
+export type MediaUnavailableReason = "not_configured" | "token_error";
+
+export type MediaAccessSnapshot =
+  | {
+      available: false;
+      reason: MediaUnavailableReason;
+    }
+  | {
+      available: true;
+      serverUrl: string;
+      accessToken: string;
+      participantIdentity: string;
+    };
+
 export type ClientMessage =
   | {
       type: "profile";
@@ -78,6 +92,7 @@ export type ServerMessage =
   | {
       type: "welcome";
       sessionId: string;
+      media: MediaAccessSnapshot;
     }
   | {
       type: "state";

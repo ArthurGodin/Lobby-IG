@@ -19,6 +19,7 @@ import {
   SIMULATION_RATE,
 } from "@ig-campus/game-core";
 import { WebSocket, WebSocketServer } from "ws";
+import { createUnavailableMediaAccessProvider, type MediaAccessProvider } from "./mediaAccess.js";
 import { parseClientMessage } from "./protocol.js";
 
 export const INPUT_LEASE_MS = 1_000;
@@ -38,8 +39,13 @@ export type CampusServer = {
   close: () => Promise<void>;
 };
 
-export function createCampusServer(): CampusServer {
+export type CampusServerOptions = {
+  mediaAccessProvider?: MediaAccessProvider;
+};
+
+export function createCampusServer(options: CampusServerOptions = {}): CampusServer {
   const sessions = new Map<string, PlayerSession>();
+  const mediaAccessProvider = options.mediaAccessProvider ?? createUnavailableMediaAccessProvider();
   const httpServer = createHttpServer();
   const websocketServer = new WebSocketServer({
     server: httpServer,
@@ -73,7 +79,14 @@ export function createCampusServer(): CampusServer {
       lastInputAt: Date.now(),
     });
 
-    send(socket, { type: "welcome", sessionId });
+    void mediaAccessProvider
+      .createAccess(sessionId, player.name)
+      .catch(() => ({ available: false, reason: "token_error" }) as const)
+      .then((media) => {
+        if (sessions.has(sessionId)) {
+          send(socket, { type: "welcome", sessionId, media });
+        }
+      });
     broadcastState();
 
     socket.on("message", (rawMessage) => {

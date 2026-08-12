@@ -10,10 +10,12 @@ import {
   AudioLines,
   LocateFixed,
   Map as MapIcon,
+  Mic,
   MicOff,
   RadioTower,
   RefreshCw,
   UsersRound,
+  Volume2,
 } from "lucide-react";
 import type Phaser from "phaser";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -21,6 +23,8 @@ import { CampusScene } from "../game/CampusScene";
 import { createCampusGame } from "../game/createCampusGame";
 import { bindMovementKeys } from "../game/input";
 import { getCampusServerUrl, joinCampus, sendMovement } from "../lib/campusClient";
+import { canToggleMicrophone, mediaStatusLabel } from "../media/mediaState";
+import { useCampusMedia } from "./useCampusMedia";
 
 type ConnectionState = "connecting" | "connected" | "offline" | "error";
 
@@ -55,6 +59,7 @@ export function CampusApp() {
   const [selfSessionId, setSelfSessionId] = useState<string | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [overviewEnabled, setOverviewEnabled] = useState(false);
+  const campusMedia = useCampusMedia();
 
   const self = useMemo(
     () => players.find((player) => player.sessionId === selfSessionId) ?? null,
@@ -70,6 +75,7 @@ export function CampusApp() {
     roomRef.current?.leave();
     roomRef.current = null;
     latestSceneStateRef.current = null;
+    await campusMedia.disconnect();
 
     const currentScene = getCampusScene(gameRef.current);
     currentScene?.setSelfSessionId(null);
@@ -94,6 +100,7 @@ export function CampusApp() {
       const scene = getCampusScene(gameRef.current);
       scene?.setSelfSessionId(room.sessionId);
       scene?.setOverview(overviewEnabledRef.current);
+      void campusMedia.connect(room.media);
 
       room.onStateChange((state) => {
         const nextPlayers = [...state.players].sort((a, b) => a.name.localeCompare(b.name));
@@ -102,6 +109,7 @@ export function CampusApp() {
           proximity: state.proximity,
         };
         getCampusScene(gameRef.current)?.syncPlayers(nextPlayers, state.proximity);
+        campusMedia.syncProximity(state.proximity);
 
         const now = performance.now();
 
@@ -125,6 +133,7 @@ export function CampusApp() {
         const scene = getCampusScene(gameRef.current);
         scene?.setSelfSessionId(null);
         scene?.syncPlayers([], { radius: PROXIMITY_RADIUS, peers: [] });
+        void campusMedia.disconnect();
         setConnectionState("offline");
       });
     } catch (error) {
@@ -134,9 +143,10 @@ export function CampusApp() {
 
       console.error(error);
       roomRef.current = null;
+      void campusMedia.disconnect();
       setConnectionState("error");
     }
-  }, []);
+  }, [campusMedia.connect, campusMedia.disconnect, campusMedia.syncProximity]);
 
   useEffect(() => {
     profileRef.current = profile;
@@ -172,8 +182,9 @@ export function CampusApp() {
       connectAbortRef.current = null;
       roomRef.current?.leave();
       roomRef.current = null;
+      void campusMedia.disconnect();
     };
-  }, [connect]);
+  }, [campusMedia.disconnect, connect]);
 
   useEffect(() => {
     return bindMovementKeys((input) => {
@@ -310,14 +321,40 @@ export function CampusApp() {
             </div>
 
             <button
-              aria-label="Microfone ainda indisponível neste protótipo"
-              className="icon-button"
-              disabled
-              title="O áudio real entra no próximo corte"
+              aria-label={microphoneActionLabel(campusMedia.state.status)}
+              aria-pressed={campusMedia.state.status === "active"}
+              className={`icon-button${
+                campusMedia.state.status === "active" ? " icon-button--active" : ""
+              }`}
+              disabled={!canToggleMicrophone(campusMedia.state.status)}
+              onClick={() => void campusMedia.toggleMicrophone()}
+              title={microphoneActionLabel(campusMedia.state.status)}
               type="button"
             >
-              <MicOff aria-hidden="true" size={18} />
+              {campusMedia.state.status === "active" ? (
+                <Mic aria-hidden="true" size={18} />
+              ) : (
+                <MicOff aria-hidden="true" size={18} />
+              )}
             </button>
+          </section>
+
+          <section className={`media-card media-card--${campusMedia.state.status}`}>
+            <div>
+              <h2 className="section-kicker">Áudio espacial</h2>
+              <strong aria-live="polite">{mediaStatusLabel(campusMedia.state)}</strong>
+              <span>{mediaHelpText(campusMedia.state.status)}</span>
+            </div>
+            {campusMedia.state.playbackBlocked ? (
+              <button
+                className="audio-playback-button"
+                onClick={() => void campusMedia.startAudio()}
+                type="button"
+              >
+                <Volume2 aria-hidden="true" size={15} />
+                Ativar som
+              </button>
+            ) : null}
           </section>
 
           <section className="status-card">
@@ -333,7 +370,7 @@ export function CampusApp() {
             <div>
               <h2 className="section-kicker">Proximidade visual</h2>
               <strong>{proximityLabel(proximity.peers)}</strong>
-              <span>O áudio real ainda não está ativo.</span>
+              <span>{proximityAudioLabel(campusMedia.state.status)}</span>
             </div>
           </section>
 
@@ -378,8 +415,55 @@ export function CampusApp() {
           </button>
         </aside>
       </section>
+      <div aria-hidden="true" className="campus-audio-root" ref={campusMedia.audioRootRef} />
     </main>
   );
+}
+
+function microphoneActionLabel(status: Parameters<typeof canToggleMicrophone>[0]): string {
+  if (status === "active") {
+    return "Mutar microfone";
+  }
+
+  if (status === "muted") {
+    return "Desmutar microfone";
+  }
+
+  if (status === "microphone-off") {
+    return "Ativar microfone";
+  }
+
+  return mediaStatusLabel({ status, playbackBlocked: false });
+}
+
+function mediaHelpText(status: Parameters<typeof canToggleMicrophone>[0]): string {
+  switch (status) {
+    case "microphone-off":
+      return "Clique no microfone quando quiser falar.";
+    case "requesting-permission":
+      return "Responda à solicitação do navegador.";
+    case "active":
+      return "Sua voz está sendo transmitida.";
+    case "muted":
+      return "Você continua na sala, sem transmitir voz.";
+    case "permission-denied":
+      return "Libere o microfone no navegador e reconecte.";
+    case "connecting":
+    case "reconnecting":
+      return "O mapa continua disponível durante a conexão.";
+    case "error":
+      return "O mapa continua funcionando. Confira o LiveKit local.";
+    default:
+      return "Inicie a mídia local para conversar.";
+  }
+}
+
+function proximityAudioLabel(status: Parameters<typeof canToggleMicrophone>[0]): string {
+  if (status === "unavailable" || status === "error") {
+    return "A proximidade continua funcionando sem áudio.";
+  }
+
+  return "O volume acompanha a distância entre os avatares.";
 }
 
 function getCampusScene(game: Phaser.Game | null): CampusScene | null {

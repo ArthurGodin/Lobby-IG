@@ -1,7 +1,13 @@
+import { fileURLToPath } from "node:url";
 import { createCampusServer } from "./campusServer.js";
+import { createMediaAccessProviderFromEnv } from "./mediaAccess.js";
+
+loadLocalEnvironment();
 
 const port = Number.parseInt(process.env.CAMPUS_SERVER_PORT ?? "2567", 10);
-const campusServer = createCampusServer();
+const campusServer = createCampusServer({
+  mediaAccessProvider: createMediaAccessProviderFromEnv(),
+});
 
 const runningServer = await campusServer.listen(port);
 console.log(`Inforgeneses Campus server listening on ${runningServer.websocketUrl}`);
@@ -13,3 +19,15 @@ async function shutdown(): Promise<void> {
 
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
+
+function loadLocalEnvironment(): void {
+  const envPath = fileURLToPath(new URL("../../../.env", import.meta.url));
+
+  try {
+    process.loadEnvFile(envPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+}

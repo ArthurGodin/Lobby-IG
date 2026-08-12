@@ -8,8 +8,13 @@ Tudo roda localmente na maquina de desenvolvimento:
 - Vite para o frontend;
 - WebSocket para sincronizacao em tempo real;
 - memoria do processo para estado temporario.
+- LiveKit Server em contêiner local para áudio WebRTC.
 
 Nao usamos banco externo, hospedagem, fila, armazenamento em nuvem ou servico pago.
+
+O custo financeiro local continua zero, mas o LiveKit usa CPU, memória e rede da máquina. Docker
+Desktop precisa estar em execução. As credenciais de desenvolvimento não devem ser reutilizadas
+em ambiente público.
 
 ## Depois
 

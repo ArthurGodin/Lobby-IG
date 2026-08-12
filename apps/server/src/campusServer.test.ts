@@ -26,6 +26,54 @@ afterEach(async () => {
 });
 
 describe("servidor do campus", () => {
+  test("vincula o acesso de midia ao sessionId da conexao", async () => {
+    const server = createCampusServer({
+      mediaAccessProvider: {
+        async createAccess(participantIdentity) {
+          return {
+            available: true,
+            serverUrl: "ws://127.0.0.1:7880",
+            accessToken: "token-de-teste",
+            participantIdentity,
+          };
+        },
+      },
+    });
+    servers.push(server);
+    const runningServer = await server.listen(0);
+    const client = await connectClient(runningServer.websocketUrl, "Lin");
+    const welcome = client.messages.find((message) => message.type === "welcome");
+
+    assert.ok(welcome);
+    assert.equal(welcome.type, "welcome");
+
+    if (welcome.type !== "welcome") {
+      return;
+    }
+
+    assert.deepEqual(welcome.media, {
+      available: true,
+      serverUrl: "ws://127.0.0.1:7880",
+      accessToken: "token-de-teste",
+      participantIdentity: welcome.sessionId,
+    });
+  });
+
+  test("mantem o campus disponivel quando a midia nao foi configurada", async () => {
+    const server = createCampusServer();
+    servers.push(server);
+    const runningServer = await server.listen(0);
+    const client = await connectClient(runningServer.websocketUrl, "Lin");
+    const welcome = client.messages.find((message) => message.type === "welcome");
+
+    assert.ok(welcome);
+    assert.equal(welcome.type, "welcome");
+
+    if (welcome.type === "welcome") {
+      assert.deepEqual(welcome.media, { available: false, reason: "not_configured" });
+    }
+  });
+
   test("normaliza a aparencia e preserva color para clientes legados", async () => {
     const server = createCampusServer();
     servers.push(server);
