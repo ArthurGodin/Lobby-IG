@@ -34,7 +34,7 @@ Um executavel so entra depois como agente local opcional para recursos que o nav
 O projeto sera um monorepo `pnpm` com duas aplicacoes:
 
 - `apps/web`: frontend React, Vite, TypeScript e Phaser;
-- `apps/server`: backend Node, TypeScript e Colyseus.
+- `apps/server`: backend Node, TypeScript e WebSocket.
 
 Dois pacotes compartilhados mantem as regras centrais fora da UI e do servidor:
 
@@ -45,7 +45,7 @@ O estado do mundo fica em memoria no servidor durante o MVP. Banco de dados sera
 
 ## Fluxo de Dados
 
-O navegador envia entradas de movimento para o servidor Colyseus. O servidor valida colisao e atualiza a posicao autoritativa dos jogadores. Os clientes recebem o estado sincronizado e renderizam os avatares no mapa.
+O navegador envia entradas de movimento para o servidor WebSocket. O servidor valida colisao e atualiza a posicao autoritativa dos jogadores. Os clientes recebem o estado sincronizado e renderizam os avatares no mapa.
 
 No MVP visual, cada aba do navegador representa um usuario temporario. Isso permite testar a base multiplayer sem autentificacao.
 
