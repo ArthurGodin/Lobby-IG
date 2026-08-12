@@ -5,74 +5,32 @@ import type {
   ProximityBand,
   ProximityPeerSnapshot,
 } from "@ig-campus/contracts";
+import {
+  getPlayerCollider,
+  MAP_COLUMNS,
+  MAP_HEIGHT,
+  MAP_ROWS,
+  MAP_WIDTH,
+  OBSTACLES,
+  PLAYER_COLLIDER,
+  type Rect,
+  SPAWN_POINTS,
+  TILE_SIZE,
+  type Vector2,
+} from "./campusMap.js";
 
-export type Vector2 = {
-  x: number;
-  y: number;
-};
+export * from "./campusMap.js";
 
-export type Rect = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
-
-export const TILE_SIZE = 32;
-export const MAP_COLUMNS = 30;
-export const MAP_ROWS = 18;
-export const MAP_WIDTH = MAP_COLUMNS * TILE_SIZE;
-export const MAP_HEIGHT = MAP_ROWS * TILE_SIZE;
-export const PLAYER_RADIUS = 13;
+/** @deprecated Use PLAYER_COLLIDER for collision geometry. */
+export const PLAYER_RADIUS = PLAYER_COLLIDER.width / 2;
 export const PLAYER_SPEED = 150;
 export const SIMULATION_RATE = 20;
 export const CLOSE_PROXIMITY_RADIUS = TILE_SIZE * 3;
 export const PROXIMITY_RADIUS = TILE_SIZE * 6;
 
-export const SPAWN_POINTS: Vector2[] = [
-  { x: 144, y: 160 },
-  { x: 208, y: 160 },
-  { x: 144, y: 224 },
-  { x: 208, y: 224 },
-  { x: 760, y: 400 },
-  { x: 824, y: 400 },
-];
-
-export const OBSTACLES: Rect[] = [
-  { x: 0, y: 0, width: MAP_WIDTH, height: TILE_SIZE },
-  { x: 0, y: MAP_HEIGHT - TILE_SIZE, width: MAP_WIDTH, height: TILE_SIZE },
-  { x: 0, y: 0, width: TILE_SIZE, height: MAP_HEIGHT },
-  { x: MAP_WIDTH - TILE_SIZE, y: 0, width: TILE_SIZE, height: MAP_HEIGHT },
-  { x: 352, y: 64, width: 256, height: 32 },
-  { x: 352, y: 96, width: 32, height: 128 },
-  { x: 576, y: 96, width: 32, height: 128 },
-  { x: 96, y: 352, width: 192, height: 32 },
-  { x: 96, y: 416, width: 192, height: 32 },
-  { x: 672, y: 128, width: 160, height: 96 },
-  { x: 448, y: 352, width: 64, height: 128 },
-  { x: 544, y: 352, width: 64, height: 128 },
-];
-
-export const ZONES = [
-  {
-    id: "patio",
-    label: "Patio",
-    rect: { x: 64, y: 64, width: 256, height: 224 },
-  },
-  {
-    id: "biblioteca",
-    label: "Biblioteca",
-    rect: { x: 640, y: 64, width: 256, height: 208 },
-  },
-  {
-    id: "reitoria",
-    label: "Reitoria",
-    rect: { x: 384, y: 320, width: 256, height: 192 },
-  },
-] as const;
-
 export function getSpawnPoint(index: number): Vector2 {
-  return SPAWN_POINTS[index % SPAWN_POINTS.length] ?? { x: 144, y: 160 };
+  const firstSpawn = SPAWN_POINTS[0] ?? { x: TILE_SIZE * 1.5, y: TILE_SIZE * 1.75 };
+  return SPAWN_POINTS[index % SPAWN_POINTS.length] ?? firstSpawn;
 }
 
 export function getAvailableSpawnPoint(occupiedPositions: Vector2[]): Vector2 {
@@ -195,14 +153,15 @@ export function getProximityPeer(
 }
 
 export function canStandAt(position: Vector2): boolean {
-  const playerBox = {
-    x: position.x - PLAYER_RADIUS,
-    y: position.y - PLAYER_RADIUS,
-    width: PLAYER_RADIUS * 2,
-    height: PLAYER_RADIUS * 2,
-  };
+  const playerBox = getPlayerCollider(position);
 
-  return !OBSTACLES.some((obstacle) => rectanglesOverlap(playerBox, obstacle));
+  return (
+    playerBox.x >= 0 &&
+    playerBox.y >= 0 &&
+    playerBox.x + playerBox.width <= MAP_WIDTH &&
+    playerBox.y + playerBox.height <= MAP_HEIGHT &&
+    !OBSTACLES.some((obstacle) => rectanglesOverlap(playerBox, obstacle))
+  );
 }
 
 export function inputToAxis(input: MovementInput): Vector2 {
@@ -219,8 +178,10 @@ export function rectanglesOverlap(a: Rect, b: Rect): boolean {
 function getWalkableTileCenters(): Vector2[] {
   const candidates: Vector2[] = [];
 
-  for (let y = TILE_SIZE * 1.5; y < MAP_HEIGHT - TILE_SIZE; y += TILE_SIZE) {
-    for (let x = TILE_SIZE * 1.5; x < MAP_WIDTH - TILE_SIZE; x += TILE_SIZE) {
+  for (let row = 1; row < MAP_ROWS - 1; row += 1) {
+    for (let column = 1; column < MAP_COLUMNS - 1; column += 1) {
+      const x = (column + 0.5) * TILE_SIZE;
+      const y = (row + 0.75) * TILE_SIZE;
       const candidate = { x, y };
 
       if (canStandAt(candidate)) {

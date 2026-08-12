@@ -1,19 +1,25 @@
-import { MAP_HEIGHT, MAP_WIDTH } from "@ig-campus/game-core";
 import Phaser from "phaser";
 import { CampusScene } from "./CampusScene";
 
-export function createCampusGame(parent: HTMLElement): Phaser.Game {
+export function createCampusGame(
+  parent: HTMLElement,
+  onSceneReady?: (scene: CampusScene) => void,
+): Phaser.Game {
   return new Phaser.Game({
     type: Phaser.AUTO,
     parent,
-    width: MAP_WIDTH,
-    height: MAP_HEIGHT,
-    backgroundColor: "#eef2e8",
-    pixelArt: false,
-    scale: {
-      mode: Phaser.Scale.FIT,
-      autoCenter: Phaser.Scale.CENTER_BOTH,
+    backgroundColor: "#18261f",
+    render: {
+      antialias: false,
+      antialiasGL: false,
+      pixelArt: true,
+      roundPixels: true,
     },
-    scene: CampusScene,
+    scale: {
+      mode: Phaser.Scale.RESIZE,
+      width: "100%",
+      height: "100%",
+    },
+    scene: new CampusScene(onSceneReady),
   });
 }

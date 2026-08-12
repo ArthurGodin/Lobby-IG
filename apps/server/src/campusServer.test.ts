@@ -26,6 +26,54 @@ afterEach(async () => {
 });
 
 describe("servidor do campus", () => {
+  test("normaliza a aparencia e preserva color para clientes legados", async () => {
+    const server = createCampusServer();
+    servers.push(server);
+    const runningServer = await server.listen(0);
+    const client = await connectClient(runningServer.websocketUrl, "Lin", {
+      color: "#7a5aa6",
+    });
+
+    const state = await waitForMessage(
+      client,
+      (message) => message.type === "state" && hasPlayers(message, ["Lin"]),
+    );
+    assert.equal(state.type, "state");
+
+    if (state.type !== "state") {
+      return;
+    }
+
+    const player = state.players.find((candidate) => candidate.name === "Lin");
+    assert.ok(player);
+    assert.equal(player.color, "#7a5aa6");
+    assert.deepEqual(player.appearance, { outfitColor: "#7a5aa6" });
+  });
+
+  test("atualiza somente a aparencia sem apagar o nome existente", async () => {
+    const server = createCampusServer();
+    servers.push(server);
+    const runningServer = await server.listen(0);
+    const client = await connectClient(runningServer.websocketUrl, "Lin");
+
+    client.socket.send(
+      JSON.stringify({
+        type: "profile",
+        payload: { appearance: { outfitColor: "#ca5a38" } },
+      }),
+    );
+
+    const state = await waitForMessage(
+      client,
+      (message) =>
+        message.type === "state" &&
+        message.players.some(
+          (player) => player.name === "Lin" && player.appearance.outfitColor === "#ca5a38",
+        ),
+    );
+    assert.equal(state.type, "state");
+  });
+
   test("envia proximidade personalizada para dois clientes", async () => {
     const server = createCampusServer();
     servers.push(server);
@@ -96,7 +144,11 @@ test("entrada de movimento expira sem heartbeat", () => {
   assert.deepEqual(getLeasedInput(moving, 1_000, 1_001 + INPUT_LEASE_MS), createIdleInput(7));
 });
 
-async function connectClient(url: string, name: string): Promise<TestClient> {
+async function connectClient(
+  url: string,
+  name: string,
+  profile: Record<string, unknown> = {},
+): Promise<TestClient> {
   const socket = new WebSocket(url);
   const client: TestClient = { socket, messages: [] };
   clients.push(client);
@@ -106,7 +158,7 @@ async function connectClient(url: string, name: string): Promise<TestClient> {
   });
 
   await waitForSocketOpen(socket);
-  socket.send(JSON.stringify({ type: "profile", payload: { name } }));
+  socket.send(JSON.stringify({ type: "profile", payload: { ...profile, name } }));
   await waitForMessage(client, (message) => message.type === "welcome");
   return client;
 }

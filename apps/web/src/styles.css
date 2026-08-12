@@ -30,6 +30,19 @@ button {
   cursor: pointer;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .campus-shell {
   display: grid;
   min-height: 100dvh;
@@ -60,6 +73,57 @@ button {
   font-family: Georgia, "Times New Roman", serif;
   font-size: clamp(24px, 3vw, 34px);
   line-height: 1;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.camera-button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(37, 54, 47, 0.22);
+  border-radius: 8px;
+  background: #f6f7f1;
+  color: #273930;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 8px 12px;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.camera-button--active {
+  border-color: #244d3b;
+  background: #244d3b;
+  color: #ffffff;
+}
+
+.camera-button:not(:disabled):hover {
+  border-color: rgba(47, 125, 92, 0.68);
+  background: #e8eee4;
+}
+
+.camera-button--active:not(:disabled):hover {
+  background: #183d2c;
+  color: #ffffff;
+}
+
+.camera-button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.camera-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .eyebrow,
@@ -109,10 +173,12 @@ button {
 }
 
 .map-frame {
+  position: relative;
   display: grid;
-  min-height: 420px;
+  height: clamp(430px, calc(100dvh - 132px), 760px);
+  min-height: clamp(430px, 68dvh, 760px);
   overflow: hidden;
-  place-items: center;
+  place-items: stretch;
   border: 1px solid rgba(37, 54, 47, 0.2);
   border-radius: 8px;
   background: #eef2e8;
@@ -130,7 +196,30 @@ button {
 
 .game-host canvas {
   display: block;
-  max-width: 100%;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.map-mode-indicator {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(244, 230, 200, 0.5);
+  border-radius: 999px;
+  background: rgba(22, 36, 30, 0.88);
+  box-shadow: 0 5px 16px rgba(12, 24, 18, 0.24);
+  color: #fff4dc;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 11px;
+  pointer-events: none;
+  transform: translateX(-50%);
+  backdrop-filter: blur(8px);
 }
 
 .campus-panel {
@@ -220,6 +309,7 @@ button {
 }
 
 .icon-button:focus-visible,
+.camera-button:focus-visible,
 .reconnect-button:focus-visible {
   outline: 3px solid rgba(47, 125, 92, 0.34);
   outline-offset: 2px;
@@ -398,12 +488,19 @@ button {
     flex-direction: column;
   }
 
-  .connection-pill {
+  .topbar-actions {
     width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .camera-button,
+  .connection-pill {
+    flex: 1;
   }
 
   .map-frame {
-    min-height: 0;
+    height: 420px;
+    min-height: 420px;
   }
 
   .campus-panel {

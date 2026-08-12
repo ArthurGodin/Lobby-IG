@@ -1,4 +1,5 @@
 import {
+  type AvatarAppearance,
   type ClientMessage,
   isPlayerColor,
   type JoinOptions,
@@ -63,6 +64,12 @@ function parseProfile(value: Record<string, unknown>): JoinOptions | null {
     return null;
   }
 
+  const appearance = parseAvatarAppearance(value.appearance);
+
+  if (value.appearance !== undefined && !appearance) {
+    return null;
+  }
+
   const profile: JoinOptions = {};
 
   if (typeof value.name === "string") {
@@ -73,7 +80,19 @@ function parseProfile(value: Record<string, unknown>): JoinOptions | null {
     profile.color = value.color;
   }
 
+  if (appearance) {
+    profile.appearance = appearance;
+  }
+
   return profile;
+}
+
+function parseAvatarAppearance(value: unknown): AvatarAppearance | null {
+  if (!isRecord(value) || !isPlayerColor(value.outfitColor)) {
+    return null;
+  }
+
+  return { outfitColor: value.outfitColor };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -2,13 +2,20 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { PLAYER_COLORS } from "@ig-campus/contracts";
 import {
+  CAMPUS_MAP,
   CLOSE_PROXIMITY_RADIUS,
+  canStandAt,
   getAvailableSpawnPoint,
+  getPlayerCollider,
   getProximityBand,
   isMoving,
+  MAP_HEIGHT,
+  MAP_WIDTH,
   moveWithCollision,
+  OBSTACLES,
   PROXIMITY_RADIUS,
   SPAWN_POINTS,
+  validateCampusMap,
 } from "@ig-campus/game-core";
 import { parseClientMessage } from "./protocol.js";
 
@@ -24,6 +31,34 @@ describe("protocolo do campus", () => {
       parseClientMessage(
         JSON.stringify({ type: "profile", payload: { name: "Ada", color: "#000000" } }),
       ),
+      null,
+    );
+  });
+
+  test("aceita aparencia valida e rejeita cor de roupa desconhecida", () => {
+    assert.deepEqual(
+      parseClientMessage(
+        JSON.stringify({
+          type: "profile",
+          payload: { appearance: { outfitColor: PLAYER_COLORS[1] } },
+        }),
+      ),
+      {
+        type: "profile",
+        payload: { appearance: { outfitColor: PLAYER_COLORS[1] } },
+      },
+    );
+    assert.equal(
+      parseClientMessage(
+        JSON.stringify({
+          type: "profile",
+          payload: { appearance: { outfitColor: "#000000" } },
+        }),
+      ),
+      null,
+    );
+    assert.equal(
+      parseClientMessage(JSON.stringify({ type: "profile", payload: { appearance: null } })),
       null,
     );
   });
@@ -69,8 +104,41 @@ describe("regras puras do mundo", () => {
   });
 
   test("uma parede interrompe o movimento autoritativo", () => {
-    const position = { x: 339, y: 160 };
+    const position = { x: 822, y: 184 };
     const input = { up: false, down: false, left: false, right: true, sequence: 1 };
     assert.deepEqual(moveWithCollision(position, input, 100), position);
+  });
+
+  test("mapa canonico possui camadas e identificadores validos", () => {
+    const expectedLength = CAMPUS_MAP.columns * CAMPUS_MAP.rows;
+    assert.equal(CAMPUS_MAP.columns, 48);
+    assert.equal(CAMPUS_MAP.rows, 34);
+    assert.equal(CAMPUS_MAP.layers.ground.length, expectedLength);
+    assert.equal(CAMPUS_MAP.layers.structures.length, expectedLength);
+    assert.equal(CAMPUS_MAP.layers.decorations.length, expectedLength);
+    assert.deepEqual(
+      CAMPUS_MAP.zones.map((zone) => zone.id),
+      ["patio", "desenvolvimento", "biblioteca", "reitoria"],
+    );
+    assert.deepEqual(validateCampusMap(CAMPUS_MAP), []);
+  });
+
+  test("spawns sao caminhaveis e colliders permanecem dentro do mapa", () => {
+    for (const spawn of SPAWN_POINTS) {
+      assert.equal(canStandAt(spawn), true);
+    }
+
+    for (const obstacle of OBSTACLES) {
+      assert.ok(obstacle.x >= 0);
+      assert.ok(obstacle.y >= 0);
+      assert.ok(obstacle.x + obstacle.width <= MAP_WIDTH);
+      assert.ok(obstacle.y + obstacle.height <= MAP_HEIGHT);
+    }
+
+    const firstSpawn = SPAWN_POINTS[0];
+    assert.ok(firstSpawn);
+    const feetCollider = getPlayerCollider(firstSpawn);
+    assert.ok(feetCollider.y < firstSpawn.y);
+    assert.equal(feetCollider.y + feetCollider.height, firstSpawn.y);
   });
 });

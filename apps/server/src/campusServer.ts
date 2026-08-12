@@ -58,6 +58,7 @@ export function createCampusServer(): CampusServer {
       sessionId,
       name: "Dev",
       color: pickPlayerColor(sessionId),
+      appearance: { outfitColor: pickPlayerColor(sessionId) },
       x: spawnPoint.x,
       y: spawnPoint.y,
       facing: "down",
@@ -90,8 +91,16 @@ export function createCampusServer(): CampusServer {
       }
 
       if (message.type === "profile") {
-        session.player.name = sanitizeDisplayName(message.payload.name);
-        session.player.color = message.payload.color ?? pickPlayerColor(sessionId);
+        if (message.payload.name !== undefined) {
+          session.player.name = sanitizeDisplayName(message.payload.name);
+        }
+
+        const outfitColor =
+          message.payload.appearance?.outfitColor ??
+          message.payload.color ??
+          session.player.appearance.outfitColor;
+        session.player.color = outfitColor;
+        session.player.appearance = { outfitColor };
         broadcastState();
         return;
       }

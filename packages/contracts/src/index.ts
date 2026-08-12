@@ -11,6 +11,10 @@ export const PLAYER_COLORS = [
 
 export type PlayerColor = (typeof PLAYER_COLORS)[number];
 
+export type AvatarAppearance = {
+  outfitColor: PlayerColor;
+};
+
 export type Direction = "up" | "down" | "left" | "right";
 
 export type MovementInput = {
@@ -24,12 +28,14 @@ export type MovementInput = {
 export type JoinOptions = {
   name?: string;
   color?: PlayerColor;
+  appearance?: AvatarAppearance;
 };
 
 export type PlayerSnapshot = {
   sessionId: string;
   name: string;
   color: PlayerColor;
+  appearance: AvatarAppearance;
   x: number;
   y: number;
   facing: Direction;

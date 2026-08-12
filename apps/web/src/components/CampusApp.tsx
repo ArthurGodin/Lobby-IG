@@ -5,8 +5,16 @@ import type {
   ProximitySnapshot,
 } from "@ig-campus/contracts";
 import { isPlayerColor, pickPlayerColor, sanitizeDisplayName } from "@ig-campus/contracts";
-import { MAP_HEIGHT, MAP_WIDTH, PROXIMITY_RADIUS } from "@ig-campus/game-core";
-import { AudioLines, MicOff, RadioTower, RefreshCw, UsersRound } from "lucide-react";
+import { PROXIMITY_RADIUS } from "@ig-campus/game-core";
+import {
+  AudioLines,
+  LocateFixed,
+  Map as MapIcon,
+  MicOff,
+  RadioTower,
+  RefreshCw,
+  UsersRound,
+} from "lucide-react";
 import type Phaser from "phaser";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CampusScene } from "../game/CampusScene";
@@ -30,6 +38,11 @@ export function CampusApp() {
   const roomRef = useRef<Awaited<ReturnType<typeof joinCampus>> | null>(null);
   const connectAbortRef = useRef<AbortController | null>(null);
   const lastPanelUpdateAtRef = useRef(0);
+  const overviewEnabledRef = useRef(false);
+  const latestSceneStateRef = useRef<{
+    players: PlayerSnapshot[];
+    proximity: ProximitySnapshot;
+  } | null>(null);
 
   const [profile, setProfile] = useState<LocalProfile>(() => loadProfile());
   const [nameDraft, setNameDraft] = useState(profile.name);
@@ -41,6 +54,7 @@ export function CampusApp() {
   });
   const [selfSessionId, setSelfSessionId] = useState<string | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
+  const [overviewEnabled, setOverviewEnabled] = useState(false);
 
   const self = useMemo(
     () => players.find((player) => player.sessionId === selfSessionId) ?? null,
@@ -55,6 +69,11 @@ export function CampusApp() {
     connectAbortRef.current?.abort();
     roomRef.current?.leave();
     roomRef.current = null;
+    latestSceneStateRef.current = null;
+
+    const currentScene = getCampusScene(gameRef.current);
+    currentScene?.setSelfSessionId(null);
+    currentScene?.syncPlayers([], { radius: PROXIMITY_RADIUS, peers: [] });
 
     const abortController = new AbortController();
     connectAbortRef.current = abortController;
@@ -72,10 +91,16 @@ export function CampusApp() {
       roomRef.current = room;
       setSelfSessionId(room.sessionId);
       setConnectionState("connected");
-      getCampusScene(gameRef.current)?.setSelfSessionId(room.sessionId);
+      const scene = getCampusScene(gameRef.current);
+      scene?.setSelfSessionId(room.sessionId);
+      scene?.setOverview(overviewEnabledRef.current);
 
       room.onStateChange((state) => {
         const nextPlayers = [...state.players].sort((a, b) => a.name.localeCompare(b.name));
+        latestSceneStateRef.current = {
+          players: nextPlayers,
+          proximity: state.proximity,
+        };
         getCampusScene(gameRef.current)?.syncPlayers(nextPlayers, state.proximity);
 
         const now = performance.now();
@@ -93,6 +118,13 @@ export function CampusApp() {
         }
 
         roomRef.current = null;
+        latestSceneStateRef.current = null;
+        setSelfSessionId(null);
+        setPlayers([]);
+        setProximity({ radius: PROXIMITY_RADIUS, peers: [] });
+        const scene = getCampusScene(gameRef.current);
+        scene?.setSelfSessionId(null);
+        scene?.syncPlayers([], { radius: PROXIMITY_RADIUS, peers: [] });
         setConnectionState("offline");
       });
     } catch (error) {
@@ -115,7 +147,16 @@ export function CampusApp() {
       return;
     }
 
-    gameRef.current = createCampusGame(gameHostRef.current);
+    gameRef.current = createCampusGame(gameHostRef.current, (scene) => {
+      scene.setSelfSessionId(roomRef.current?.sessionId ?? null);
+      scene.setOverview(overviewEnabledRef.current);
+
+      const latestState = latestSceneStateRef.current;
+
+      if (latestState) {
+        scene.syncPlayers(latestState.players, latestState.proximity);
+      }
+    });
 
     return () => {
       gameRef.current?.destroy(true);
@@ -140,6 +181,21 @@ export function CampusApp() {
     });
   }, []);
 
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !overviewEnabled || !self || isEditableTarget(event.target)) {
+        return;
+      }
+
+      overviewEnabledRef.current = false;
+      setOverviewEnabled(false);
+      getCampusScene(gameRef.current)?.setOverview(false);
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [overviewEnabled, self]);
+
   const handleNameCommit = () => {
     const name = sanitizeDisplayName(nameDraft);
     const nextProfile = {
@@ -155,9 +211,19 @@ export function CampusApp() {
   };
 
   const handleReconnect = () => {
+    overviewEnabledRef.current = false;
+    setOverviewEnabled(false);
+    getCampusScene(gameRef.current)?.setOverview(false);
     setPlayers([]);
     setProximity({ radius: PROXIMITY_RADIUS, peers: [] });
     void connect();
+  };
+
+  const handleOverviewToggle = () => {
+    const nextOverviewEnabled = !overviewEnabled;
+    overviewEnabledRef.current = nextOverviewEnabled;
+    setOverviewEnabled(nextOverviewEnabled);
+    getCampusScene(gameRef.current)?.setOverview(nextOverviewEnabled);
   };
 
   return (
@@ -168,25 +234,51 @@ export function CampusApp() {
           <h1>Campus</h1>
         </div>
 
-        <div
-          aria-live="polite"
-          className={`connection-pill connection-pill--${connectionState}`}
-          role="status"
-        >
-          <RadioTower aria-hidden="true" size={16} />
-          <span>{connectionLabel(connectionState)}</span>
+        <div className="topbar-actions">
+          <button
+            aria-pressed={overviewEnabled}
+            className={`camera-button${overviewEnabled ? " camera-button--active" : ""}`}
+            onClick={handleOverviewToggle}
+            title={
+              overviewEnabled ? "Voltar ao acompanhamento do avatar" : "Enquadrar todo o campus"
+            }
+            type="button"
+          >
+            {overviewEnabled ? (
+              <LocateFixed aria-hidden="true" size={17} />
+            ) : (
+              <MapIcon aria-hidden="true" size={17} />
+            )}
+            <span>{overviewEnabled ? "Voltar ao avatar" : "Visão geral"}</span>
+          </button>
+
+          <div
+            aria-live="polite"
+            className={`connection-pill connection-pill--${connectionState}`}
+            role="status"
+          >
+            <RadioTower aria-hidden="true" size={16} />
+            <span>{connectionLabel(connectionState)}</span>
+          </div>
         </div>
       </header>
 
       <section className="campus-workspace">
-        <div
-          aria-label={getMapDescription(self, proximity)}
-          className="map-frame"
-          role="img"
-          style={{ aspectRatio: `${MAP_WIDTH} / ${MAP_HEIGHT}` }}
-        >
+        <div aria-label={getMapDescription(self, proximity)} className="map-frame" role="img">
           <div ref={gameHostRef} className="game-host" />
+          {overviewEnabled ? (
+            <div className="map-mode-indicator">
+              <MapIcon aria-hidden="true" size={14} />
+              Campus completo · movimento ativo
+            </div>
+          ) : null}
         </div>
+
+        <p className="sr-only" aria-live="polite">
+          {overviewEnabled
+            ? "Visão geral ativada. O movimento do avatar continua disponível."
+            : "A câmera voltou a acompanhar seu avatar."}
+        </p>
 
         <aside className="campus-panel" aria-label="Painel do campus">
           <section className="identity-box">
@@ -393,4 +485,17 @@ function getMapDescription(self: PlayerSnapshot | null, proximity: ProximitySnap
   }
 
   return `Mapa do Campus. Você está na posição ${Math.round(self.x)}, ${Math.round(self.y)}. ${proximityLabel(proximity.peers)}.`;
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return (
+    target.isContentEditable ||
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  );
 }

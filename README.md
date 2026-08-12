@@ -1,15 +1,16 @@
 # Inforgeneses Campus
 
-Metaverso corporativo 2D para reduzir a friccao de conversas rapidas entre pessoas do time.
+Metaverso corporativo 2D para reduzir a fricção de conversas rápidas entre pessoas do time.
 
-Este primeiro corte e 100% local e sem custo:
+Este primeiro corte é 100% local e sem custo:
 
-- web app com React, Vite e Phaser;
+- web app com React, Vite e Phaser 4;
 - servidor multiplayer local com Node e WebSocket;
-- estado em memoria;
+- mapa original em pixel art, avatar animado e câmera híbrida;
+- estado em memória;
 - sem banco externo;
 - sem cloud;
-- sem servico pago.
+- sem serviço pago.
 
 ## Requisitos
 
@@ -23,16 +24,17 @@ pnpm install
 pnpm dev
 ```
 
-Depois abra:
+Depois, abra:
 
 ```text
-http://localhost:5173
+http://127.0.0.1:5173
 ```
 
-Abra duas abas para simular dois funcionarios no mesmo campus.
+Abra duas abas para simular dois funcionários no mesmo campus. Use `WASD` ou as setas para
+andar. O botão **Visão geral** enquadra todo o mapa e `Esc` volta ao avatar.
 
-Este MVP e jogavel em computador com teclado. A interface se adapta a telas pequenas, mas
-controles por toque ficam para um corte futuro porque o uso principal do campus e durante o
+Este MVP é jogável em computador com teclado. A interface se adapta a telas pequenas, mas
+controles por toque ficam para um corte futuro porque o uso principal do campus é durante o
 trabalho em desktop.
 
 ## Scripts
@@ -43,15 +45,22 @@ pnpm test
 pnpm typecheck
 pnpm build
 pnpm lint
+pnpm assets:generate
 pnpm format
 ```
 
+`assets:generate` recria os PNGs originais deterministicamente usando apenas APIs nativas do
+Node. Nenhum asset protegido, gerador pago ou chamada externa é necessário.
+
 ## Custo
 
-O desenvolvimento local nao exige pagamento. O primeiro custo real so aparece quando o campus precisar ficar acessivel pela internet com audio WebRTC confiavel para pessoas em estados diferentes. Nesse momento, a melhor opcao de custo zero e usar infraestrutura publica ja existente da Inforgeneses.
+O desenvolvimento local não exige pagamento. O primeiro custo real só aparece quando o campus
+precisar ficar acessível pela internet com áudio WebRTC confiável para pessoas em estados
+diferentes. Nesse momento, custo operacional zero só será possível se a Inforgeneses já oferecer
+servidor público e banda; o software continuará gratuito.
 
 ## Proximo corte
 
-O mapa ja calcula e exibe proximidade sem capturar microfone. O proximo corte tecnico e
-conectar LiveKit local e usar essa mesma regra para controlar audio espacial. Colyseus pode
-voltar depois se o protocolo multiplayer ficar grande o suficiente para justificar o framework.
+O mapa já calcula e exibe proximidade sem capturar microfone. O próximo corte técnico é conectar
+LiveKit local e usar essa mesma regra para controlar áudio espacial. Colyseus pode voltar depois
+se o protocolo multiplayer ficar grande o suficiente para justificar o framework.
