@@ -12,6 +12,9 @@ Tudo roda localmente na maquina de desenvolvimento:
 
 Nao usamos banco externo, hospedagem, fila, armazenamento em nuvem ou servico pago.
 
+Zonas privadas reutilizam a mesma sala LiveKit local e as permissões de assinatura já oferecidas
+pelo servidor. Elas não adicionam contêiner, banco, conta ou cobrança.
+
 O custo financeiro local continua zero, mas o LiveKit usa CPU, memória e rede da máquina. Docker
 Desktop precisa estar em execução. As credenciais de desenvolvimento não devem ser reutilizadas
 em ambiente público.

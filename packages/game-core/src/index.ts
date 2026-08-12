@@ -1,12 +1,16 @@
 import type {
+  AcousticEnvironmentSnapshot,
+  AcousticSnapshot,
   Direction,
   MovementInput,
   PlayerSnapshot,
   ProximityBand,
   ProximityPeerSnapshot,
 } from "@ig-campus/contracts";
+import { COMMONS_ACOUSTIC_ENVIRONMENT } from "@ig-campus/contracts";
 import {
   getPlayerCollider,
+  getZoneAtPosition,
   MAP_COLUMNS,
   MAP_HEIGHT,
   MAP_ROWS,
@@ -149,6 +153,61 @@ export function getProximityPeer(
     sessionId: candidate.sessionId,
     distance: Math.round(distance),
     band,
+  };
+}
+
+export function getAcousticEnvironment(player: PlayerSnapshot): AcousticEnvironmentSnapshot {
+  const zone = getZoneAtPosition(player);
+
+  if (!zone) {
+    return { ...COMMONS_ACOUSTIC_ENVIRONMENT };
+  }
+
+  return {
+    zoneId: zone.id,
+    label: zone.label,
+    mode: zone.acousticMode,
+  };
+}
+
+export function arePlayersAcousticallyCompatible(
+  first: PlayerSnapshot,
+  second: PlayerSnapshot,
+): boolean {
+  const firstEnvironment = getAcousticEnvironment(first);
+  const secondEnvironment = getAcousticEnvironment(second);
+
+  if (firstEnvironment.mode === "open" && secondEnvironment.mode === "open") {
+    return true;
+  }
+
+  return (
+    firstEnvironment.mode === "private" &&
+    secondEnvironment.mode === "private" &&
+    firstEnvironment.zoneId === secondEnvironment.zoneId
+  );
+}
+
+export function buildAcousticPolicy(
+  listener: PlayerSnapshot,
+  players: PlayerSnapshot[],
+): Omit<AcousticSnapshot, "revision"> {
+  const compatiblePlayers = players
+    .filter(
+      (candidate) =>
+        candidate.sessionId !== listener.sessionId &&
+        arePlayersAcousticallyCompatible(listener, candidate),
+    )
+    .sort((first, second) => first.sessionId.localeCompare(second.sessionId));
+  const audiblePeers = compatiblePlayers
+    .map((candidate) => getProximityPeer(listener, candidate))
+    .filter((peer) => peer !== null)
+    .sort((first, second) => first.sessionId.localeCompare(second.sessionId));
+
+  return {
+    environment: getAcousticEnvironment(listener),
+    allowedPeerSessionIds: compatiblePlayers.map((player) => player.sessionId),
+    audiblePeers,
   };
 }
 

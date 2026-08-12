@@ -1,4 +1,4 @@
-import type { MediaAccessSnapshot, ProximitySnapshot } from "@ig-campus/contracts";
+import type { AcousticSnapshot, MediaAccessSnapshot } from "@ig-campus/contracts";
 import {
   MediaDeviceFailure,
   type RemoteParticipant,
@@ -8,15 +8,21 @@ import {
   RoomEvent,
   Track,
 } from "livekit-client";
+import { buildAcousticMediaPlan } from "./acousticMediaPolicy";
 import type { CampusMediaState } from "./mediaState";
-import { AUDIO_UNSUBSCRIBE_DELAY_MS, calculateProximityGain } from "./proximityAudioPolicy";
+import { AUDIO_UNSUBSCRIBE_DELAY_MS } from "./proximityAudioPolicy";
 
 type StateListener = (state: CampusMediaState) => void;
 
 export class CampusMediaController {
   private room: Room | null = null;
+  private allowedIdentities = new Set<string>();
+  private allowedFingerprint = "[]";
   private desiredGains = new Map<string, number>();
   private unsubscribeTimers = new Map<string, number>();
+  private lastAcousticRevision = -1;
+  private mediaConnected = false;
+  private privacyFailed = false;
   private generation = 0;
   private disconnecting = false;
   private state: CampusMediaState = {
@@ -68,7 +74,13 @@ export class CampusMediaController {
         status: "microphone-off",
         playbackBlocked: !room.canPlaybackAudio,
       });
-      this.applyProximityToAllParticipants();
+      this.mediaConnected = true;
+
+      if (!this.applyPublisherPermissions(room)) {
+        return;
+      }
+
+      this.applyAcousticsToAllParticipants();
     } catch (error) {
       if (generation !== this.generation) {
         return;
@@ -77,6 +89,7 @@ export class CampusMediaController {
       if (this.room === room) {
         this.room = null;
       }
+      this.mediaConnected = false;
       room.removeAllListeners();
       await room.disconnect();
       console.warn("Não foi possível conectar o áudio local.", error);
@@ -84,11 +97,55 @@ export class CampusMediaController {
     }
   }
 
-  syncProximity(proximity: ProximitySnapshot): void {
-    this.desiredGains = new Map(
-      proximity.peers.map((peer) => [peer.sessionId, calculateProximityGain(peer.distance)]),
+  syncAcoustics(snapshot: AcousticSnapshot | null): void {
+    const plan = buildAcousticMediaPlan(
+      snapshot,
+      this.lastAcousticRevision,
+      this.allowedIdentities,
     );
-    this.applyProximityToAllParticipants();
+
+    if (!plan) {
+      return;
+    }
+
+    if (plan.revision !== null) {
+      this.lastAcousticRevision = plan.revision;
+    }
+
+    const permissionsChanged = plan.allowedFingerprint !== this.allowedFingerprint;
+    this.allowedIdentities = new Set(plan.allowedIdentities);
+    this.allowedFingerprint = plan.allowedFingerprint;
+    this.desiredGains = plan.desiredGains;
+    this.privacyFailed = plan.failClosed;
+
+    const room = this.room;
+
+    if (!room || !this.mediaConnected) {
+      return;
+    }
+
+    if (permissionsChanged && !this.applyPublisherPermissions(room)) {
+      return;
+    }
+
+    for (const identity of plan.immediatelyBlockedIdentities) {
+      const participant = room.remoteParticipants.get(identity);
+
+      if (participant) {
+        this.unsubscribeImmediately(participant);
+      }
+    }
+
+    if (plan.failClosed) {
+      this.enterPrivacyFailure(room);
+      return;
+    }
+
+    if (this.state.status === "privacy-error") {
+      this.setState({ status: "microphone-off", playbackBlocked: !room.canPlaybackAudio });
+    }
+
+    this.applyAcousticsToAllParticipants();
   }
 
   async toggleMicrophone(): Promise<void> {
@@ -102,6 +159,10 @@ export class CampusMediaController {
       this.setState({ ...this.state, status: "requesting-permission" });
 
       try {
+        if (!this.applyPublisherPermissions(room)) {
+          return;
+        }
+
         await room.localParticipant.setMicrophoneEnabled(true);
         this.setState({
           status: room.localParticipant.isMicrophoneEnabled ? "active" : "error",
@@ -155,7 +216,12 @@ export class CampusMediaController {
     this.generation += 1;
     this.disconnecting = true;
     this.clearUnsubscribeTimers();
+    this.allowedIdentities.clear();
+    this.allowedFingerprint = "[]";
     this.desiredGains.clear();
+    this.lastAcousticRevision = -1;
+    this.mediaConnected = false;
+    this.privacyFailed = false;
     this.removeAudioElements();
     const room = this.room;
     this.room = null;
@@ -172,10 +238,10 @@ export class CampusMediaController {
   private bindRoomEvents(room: Room): void {
     room
       .on(RoomEvent.ParticipantConnected, (participant) => {
-        this.applyProximity(participant);
+        this.applyAcoustics(participant);
       })
       .on(RoomEvent.TrackPublished, (_publication, participant) => {
-        this.applyProximity(participant);
+        this.applyAcoustics(participant);
       })
       .on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
         this.handleTrackSubscribed(track, publication, participant);
@@ -191,23 +257,33 @@ export class CampusMediaController {
         this.setState({ ...this.state, playbackBlocked: !room.canPlaybackAudio });
       })
       .on(RoomEvent.Reconnecting, () => {
+        this.mediaConnected = false;
         this.setState({ ...this.state, status: "reconnecting" });
       })
       .on(RoomEvent.Reconnected, () => {
-        this.setState({
-          status: room.localParticipant.isMicrophoneEnabled ? "active" : "microphone-off",
-          playbackBlocked: !room.canPlaybackAudio,
-        });
-        this.applyProximityToAllParticipants();
+        this.mediaConnected = true;
+
+        if (this.applyPublisherPermissions(room)) {
+          this.setState({
+            status: this.privacyFailed
+              ? "privacy-error"
+              : room.localParticipant.isMicrophoneEnabled
+                ? "active"
+                : "microphone-off",
+            playbackBlocked: !room.canPlaybackAudio,
+          });
+          this.applyAcousticsToAllParticipants();
+        }
       })
       .on(RoomEvent.Disconnected, () => {
+        this.mediaConnected = false;
         if (!this.disconnecting && this.room === room) {
           this.setState({ status: "error", playbackBlocked: false });
         }
       });
   }
 
-  private applyProximityToAllParticipants(): void {
+  private applyAcousticsToAllParticipants(): void {
     const room = this.room;
 
     if (!room) {
@@ -215,11 +291,16 @@ export class CampusMediaController {
     }
 
     for (const participant of room.remoteParticipants.values()) {
-      this.applyProximity(participant);
+      this.applyAcoustics(participant);
     }
   }
 
-  private applyProximity(participant: RemoteParticipant): void {
+  private applyAcoustics(participant: RemoteParticipant): void {
+    if (!this.allowedIdentities.has(participant.identity)) {
+      this.unsubscribeImmediately(participant);
+      return;
+    }
+
     const gain = this.desiredGains.get(participant.identity) ?? 0;
     participant.setVolume(gain, Track.Source.Microphone);
 
@@ -243,7 +324,11 @@ export class CampusMediaController {
     publication: RemoteTrackPublication,
     participant: RemoteParticipant,
   ): void {
-    if (track.kind !== Track.Kind.Audio || publication.source !== Track.Source.Microphone) {
+    if (
+      track.kind !== Track.Kind.Audio ||
+      publication.source !== Track.Source.Microphone ||
+      !this.allowedIdentities.has(participant.identity)
+    ) {
       publication.setSubscribed(false);
       return;
     }
@@ -267,7 +352,10 @@ export class CampusMediaController {
     const timer = window.setTimeout(() => {
       this.unsubscribeTimers.delete(participant.identity);
 
-      if ((this.desiredGains.get(participant.identity) ?? 0) > 0) {
+      if (
+        this.allowedIdentities.has(participant.identity) &&
+        (this.desiredGains.get(participant.identity) ?? 0) > 0
+      ) {
         return;
       }
 
@@ -278,6 +366,68 @@ export class CampusMediaController {
       }
     }, AUDIO_UNSUBSCRIBE_DELAY_MS);
     this.unsubscribeTimers.set(participant.identity, timer);
+  }
+
+  private unsubscribeImmediately(participant: RemoteParticipant): void {
+    this.clearUnsubscribeTimer(participant.identity);
+    participant.setVolume(0, Track.Source.Microphone);
+
+    for (const publication of participant.audioTrackPublications.values()) {
+      if (publication.source === Track.Source.Microphone) {
+        publication.setSubscribed(false);
+      }
+    }
+  }
+
+  private applyPublisherPermissions(room: Room): boolean {
+    try {
+      room.localParticipant.setTrackSubscriptionPermissions(
+        false,
+        [...this.allowedIdentities].sort().map((participantIdentity) => ({
+          participantIdentity,
+          allowAll: true,
+        })),
+      );
+      return true;
+    } catch (error) {
+      console.warn("Não foi possível proteger a conversa atual.", error);
+      this.enterPrivacyFailure(room, true);
+      return false;
+    }
+  }
+
+  private enterPrivacyFailure(room: Room, disconnectMedia = false): void {
+    this.privacyFailed = true;
+    this.allowedIdentities.clear();
+    this.allowedFingerprint = "[]";
+    this.desiredGains.clear();
+    this.clearUnsubscribeTimers();
+
+    try {
+      room.localParticipant.setTrackSubscriptionPermissions(false, []);
+    } catch {
+      // O microfone também será desligado abaixo: a política permanece fechada.
+    }
+
+    for (const participant of room.remoteParticipants.values()) {
+      this.unsubscribeImmediately(participant);
+    }
+
+    if (room.localParticipant.isMicrophoneEnabled) {
+      void room.localParticipant.setMicrophoneEnabled(false).catch((error) => {
+        console.warn("Não foi possível desligar o microfone após falha de privacidade.", error);
+      });
+    }
+
+    this.setState({ status: "privacy-error", playbackBlocked: !room.canPlaybackAudio });
+
+    if (disconnectMedia) {
+      this.mediaConnected = false;
+      this.room = null;
+      room.removeAllListeners();
+      this.removeAudioElements();
+      void room.disconnect();
+    }
   }
 
   private clearUnsubscribeTimer(identity: string): void {

@@ -9,6 +9,7 @@ describe("estado da interface de audio", () => {
     assert.equal(canToggleMicrophone("muted"), true);
     assert.equal(canToggleMicrophone("requesting-permission"), false);
     assert.equal(canToggleMicrophone("permission-denied"), false);
+    assert.equal(canToggleMicrophone("privacy-error"), false);
     assert.equal(canToggleMicrophone("error"), false);
   });
 
@@ -21,6 +22,10 @@ describe("estado da interface de audio", () => {
     assert.equal(
       mediaStatusLabel({ status: "permission-denied", playbackBlocked: false }),
       "Permissão bloqueada",
+    );
+    assert.equal(
+      mediaStatusLabel({ status: "privacy-error", playbackBlocked: false }),
+      "Privacidade do áudio indisponível",
     );
   });
 });

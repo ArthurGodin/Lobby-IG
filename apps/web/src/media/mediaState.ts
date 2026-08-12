@@ -7,6 +7,7 @@ export type CampusMediaStatus =
   | "muted"
   | "permission-denied"
   | "reconnecting"
+  | "privacy-error"
   | "error";
 
 export type CampusMediaState = {
@@ -35,6 +36,8 @@ export function mediaStatusLabel(state: CampusMediaState): string {
       return "Permissão bloqueada";
     case "reconnecting":
       return "Reconectando o áudio";
+    case "privacy-error":
+      return "Privacidade do áudio indisponível";
     case "error":
       return "Erro no áudio";
     default:

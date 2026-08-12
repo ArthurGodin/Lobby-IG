@@ -9,6 +9,7 @@ O projeto continua 100% local e sem custo:
 - mapa original em pixel art, avatar animado e câmera híbrida;
 - estado em memória;
 - áudio por proximidade com LiveKit self-hosted local;
+- isolamento automático de conversas na Administração / Reitoria;
 - sem banco externo;
 - sem cloud;
 - sem serviço pago.
@@ -85,12 +86,21 @@ no backend. O navegador conecta ao LiveKit com assinatura automática desativada
 os microfones de avatares próximos. O volume é completo na faixa mais próxima, diminui
 gradualmente e chega a zero fora do alcance.
 
+As zonas também definem a política acústica. Pátio, Desenvolvimento, Biblioteca e áreas comuns
+são abertas. A Administração / Reitoria é privada: somente avatares dentro dela podem assinar os
+microfones uns dos outros, ainda respeitando a distância. Atravessar a porta aplica a mudança
+automaticamente e o painel sempre informa o ambiente atual.
+
+Se a política recebida for inválida ou o navegador não conseguir protegê-la, o sistema desassina
+o áudio remoto e desliga o microfone local. O mapa e o radar físico continuam funcionando.
+
 As credenciais `devkey`/`secret` e `LIVEKIT_NODE_IP=127.0.0.1` existem apenas para desenvolvimento
 na própria máquina. Para testar em outra máquina da rede, endereço do frontend, WebSocket e
 LiveKit precisam usar o IP LAN do host; isso será documentado e automatizado em um corte próprio.
 
-## Próximo corte
+## Próximos cortes
 
-O próximo passo do áudio é adicionar isolamento acústico pelas zonas privadas do mapa. Depois
-entram compartilhamento de tela por proximidade e indicadores de fala. Colyseus pode voltar se o
-protocolo multiplayer crescer o suficiente para justificar o framework.
+Os próximos incrementos de áudio podem incluir indicador de fala e posicionamento estéreo. O
+compartilhamento de tela por proximidade permanece posterior, porque exige limites próprios de
+banda e consentimento. Colyseus pode voltar se o protocolo multiplayer crescer o suficiente para
+justificar o framework.

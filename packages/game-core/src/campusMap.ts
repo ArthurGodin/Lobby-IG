@@ -1,3 +1,5 @@
+import type { AcousticMode, CampusZoneId } from "@ig-campus/contracts";
+
 export type Vector2 = {
   x: number;
   y: number;
@@ -46,11 +48,12 @@ export const CAMPUS_TILE_IDS = [
 export type CampusTileId = (typeof CAMPUS_TILE_IDS)[number];
 export type CampusMapLayer = readonly CampusTileId[];
 
-export type CampusZoneId = "patio" | "desenvolvimento" | "biblioteca" | "reitoria";
+export type { CampusZoneId } from "@ig-campus/contracts";
 
 export type CampusZone = {
   id: CampusZoneId;
   label: string;
+  acousticMode: AcousticMode;
   rect: Rect;
 };
 
@@ -151,6 +154,21 @@ export function isRectInsideMap(rect: Rect): boolean {
   );
 }
 
+export function getZoneAtPosition(
+  position: Vector2,
+  map: CampusMapDefinition = CAMPUS_MAP,
+): CampusZone | null {
+  return (
+    map.zones.find(
+      (zone) =>
+        position.x >= zone.rect.x &&
+        position.x < zone.rect.x + zone.rect.width &&
+        position.y >= zone.rect.y &&
+        position.y < zone.rect.y + zone.rect.height,
+    ) ?? null
+  );
+}
+
 export function validateCampusMap(map: CampusMapDefinition): string[] {
   const errors: string[] = [];
   const expectedLayerLength = map.columns * map.rows;
@@ -178,7 +196,7 @@ export function validateCampusMap(map: CampusMapDefinition): string[] {
 
   const zoneIds = new Set<string>();
 
-  for (const zone of map.zones) {
+  for (const [zoneIndex, zone] of map.zones.entries()) {
     if (zoneIds.has(zone.id)) {
       errors.push(`zona duplicada: ${zone.id}`);
     }
@@ -187,6 +205,12 @@ export function validateCampusMap(map: CampusMapDefinition): string[] {
 
     if (!isRectWithinDimensions(zone.rect, map.columns * map.tileSize, map.rows * map.tileSize)) {
       errors.push(`zona fora do mapa: ${zone.id}`);
+    }
+
+    for (const previousZone of map.zones.slice(0, zoneIndex)) {
+      if (rectanglesOverlap(zone.rect, previousZone.rect)) {
+        errors.push(`zonas sobrepostas: ${previousZone.id} e ${zone.id}`);
+      }
     }
   }
 
@@ -235,10 +259,10 @@ function createCampusMap(): CampusMapDefinition {
       decorations: Object.freeze(decorations),
     }),
     zones: Object.freeze([
-      createZone("patio", "Patio", 2, 2, 19, 13),
-      createZone("desenvolvimento", "Desenvolvimento", 26, 2, 20, 13),
-      createZone("biblioteca", "Biblioteca", 2, 19, 19, 13),
-      createZone("reitoria", "Administracao / Reitoria", 26, 19, 20, 13),
+      createZone("patio", "Pátio", "open", 2, 2, 19, 13),
+      createZone("desenvolvimento", "Desenvolvimento", "open", 26, 2, 20, 13),
+      createZone("biblioteca", "Biblioteca", "open", 2, 19, 19, 13),
+      createZone("reitoria", "Administração / Reitoria", "private", 26, 19, 20, 13),
     ]),
     spawns: Object.freeze([
       feetAtTile(7, 12),
@@ -396,6 +420,7 @@ function setTile(layer: CampusTileId[], column: number, row: number, tileId: Cam
 function createZone(
   id: CampusZoneId,
   label: string,
+  acousticMode: AcousticMode,
   column: number,
   row: number,
   width: number,
@@ -404,6 +429,7 @@ function createZone(
   return Object.freeze({
     id,
     label,
+    acousticMode,
     rect: Object.freeze({
       x: column * TILE_SIZE,
       y: row * TILE_SIZE,

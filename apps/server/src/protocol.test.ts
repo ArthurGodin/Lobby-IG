@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { PLAYER_COLORS } from "@ig-campus/contracts";
+import { PLAYER_COLORS, type PlayerSnapshot } from "@ig-campus/contracts";
 import {
+  arePlayersAcousticallyCompatible,
+  buildAcousticPolicy,
   CAMPUS_MAP,
   CLOSE_PROXIMITY_RADIUS,
   canStandAt,
   getAvailableSpawnPoint,
   getPlayerCollider,
   getProximityBand,
+  getZoneAtPosition,
   isMoving,
   MAP_HEIGHT,
   MAP_WIDTH,
@@ -123,6 +126,62 @@ describe("regras puras do mundo", () => {
     assert.deepEqual(validateCampusMap(CAMPUS_MAP), []);
   });
 
+  test("classifica as bordas de zona sem ambiguidade", () => {
+    const reitoria = CAMPUS_MAP.zones.find((zone) => zone.id === "reitoria");
+    assert.ok(reitoria);
+
+    assert.equal(getZoneAtPosition({ x: reitoria.rect.x, y: reitoria.rect.y })?.id, "reitoria");
+    assert.equal(
+      getZoneAtPosition({
+        x: reitoria.rect.x + reitoria.rect.width - 0.001,
+        y: reitoria.rect.y + reitoria.rect.height - 0.001,
+      })?.id,
+      "reitoria",
+    );
+    assert.notEqual(
+      getZoneAtPosition({ x: reitoria.rect.x + reitoria.rect.width, y: reitoria.rect.y })?.id,
+      "reitoria",
+    );
+    assert.notEqual(
+      getZoneAtPosition({ x: reitoria.rect.x, y: reitoria.rect.y + reitoria.rect.height })?.id,
+      "reitoria",
+    );
+  });
+
+  test("rejeita zonas sobrepostas", () => {
+    const firstZone = CAMPUS_MAP.zones[0];
+    const secondZone = CAMPUS_MAP.zones[1];
+    assert.ok(firstZone);
+    assert.ok(secondZone);
+    const invalidMap = {
+      ...CAMPUS_MAP,
+      zones: [firstZone, { ...secondZone, rect: { ...firstZone.rect } }],
+    };
+
+    assert.ok(validateCampusMap(invalidMap).some((error) => error.includes("zonas sobrepostas")));
+  });
+
+  test("isola salas privadas sem alterar a proximidade fisica", () => {
+    const openA = playerAt("open-a", 736, 536);
+    const openB = playerAt("open-b", 768, 536);
+    const privateA = playerAt("private-a", 850, 672);
+    const privateB = playerAt("private-b", 880, 672);
+    const corridor = playerAt("corridor", 800, 672);
+
+    assert.equal(arePlayersAcousticallyCompatible(openA, openB), true);
+    assert.equal(arePlayersAcousticallyCompatible(privateA, privateB), true);
+    assert.equal(arePlayersAcousticallyCompatible(privateA, corridor), false);
+
+    const policy = buildAcousticPolicy(privateA, [corridor, privateB, privateA]);
+    assert.equal(policy.environment.zoneId, "reitoria");
+    assert.equal(policy.environment.mode, "private");
+    assert.deepEqual(policy.allowedPeerSessionIds, ["private-b"]);
+    assert.deepEqual(
+      policy.audiblePeers.map((peer) => peer.sessionId),
+      ["private-b"],
+    );
+  });
+
   test("spawns sao caminhaveis e colliders permanecem dentro do mapa", () => {
     for (const spawn of SPAWN_POINTS) {
       assert.equal(canStandAt(spawn), true);
@@ -142,3 +201,17 @@ describe("regras puras do mundo", () => {
     assert.equal(feetCollider.y + feetCollider.height, firstSpawn.y);
   });
 });
+
+function playerAt(sessionId: string, x: number, y: number): PlayerSnapshot {
+  return {
+    sessionId,
+    name: sessionId,
+    color: PLAYER_COLORS[0],
+    appearance: { outfitColor: PLAYER_COLORS[0] },
+    x,
+    y,
+    facing: "down",
+    moving: false,
+    sequence: 0,
+  };
+}

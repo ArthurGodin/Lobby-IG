@@ -1,5 +1,11 @@
 export const CAMPUS_ROOM_NAME = "campus";
 
+export const CAMPUS_ZONE_IDS = ["patio", "desenvolvimento", "biblioteca", "reitoria"] as const;
+export type CampusZoneId = (typeof CAMPUS_ZONE_IDS)[number];
+
+export const ACOUSTIC_MODES = ["open", "private"] as const;
+export type AcousticMode = (typeof ACOUSTIC_MODES)[number];
+
 export const PLAYER_COLORS = [
   "#2f7d5c",
   "#ca5a38",
@@ -56,10 +62,30 @@ export type ProximitySnapshot = {
   peers: ProximityPeerSnapshot[];
 };
 
+export type AcousticEnvironmentSnapshot = {
+  zoneId: CampusZoneId | null;
+  label: string;
+  mode: AcousticMode;
+};
+
+export type AcousticSnapshot = {
+  revision: number;
+  environment: AcousticEnvironmentSnapshot;
+  allowedPeerSessionIds: string[];
+  audiblePeers: ProximityPeerSnapshot[];
+};
+
+export const COMMONS_ACOUSTIC_ENVIRONMENT: AcousticEnvironmentSnapshot = {
+  zoneId: null,
+  label: "Áreas comuns",
+  mode: "open",
+};
+
 export type WorldStateSnapshot = {
   serverTick: number;
   players: PlayerSnapshot[];
   proximity: ProximitySnapshot;
+  acoustic: AcousticSnapshot;
 };
 
 export type ConnectionStatus = "connecting" | "connected" | "offline" | "error";
@@ -99,6 +125,7 @@ export type ServerMessage =
       serverTick: number;
       players: PlayerSnapshot[];
       proximity: ProximitySnapshot;
+      acoustic: AcousticSnapshot;
     }
   | {
       type: "error";
@@ -141,4 +168,12 @@ export function pickPlayerColor(seed: string): PlayerColor {
 
 export function isPlayerColor(value: unknown): value is PlayerColor {
   return typeof value === "string" && PLAYER_COLORS.some((color) => color === value);
+}
+
+export function isCampusZoneId(value: unknown): value is CampusZoneId {
+  return typeof value === "string" && CAMPUS_ZONE_IDS.some((zoneId) => zoneId === value);
+}
+
+export function isAcousticMode(value: unknown): value is AcousticMode {
+  return typeof value === "string" && ACOUSTIC_MODES.some((mode) => mode === value);
 }

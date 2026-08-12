@@ -1,4 +1,5 @@
 import type {
+  AcousticSnapshot,
   ClientMessage,
   JoinOptions,
   MediaAccessSnapshot,
@@ -6,10 +7,15 @@ import type {
   ServerMessage,
   WorldStateSnapshot,
 } from "@ig-campus/contracts";
+import { isAcousticMode, isCampusZoneId } from "@ig-campus/contracts";
 
 const DEFAULT_SERVER_URL = "ws://127.0.0.1:2567";
 
-type StateListener = (state: WorldStateSnapshot) => void;
+export type CampusStateSnapshot = Omit<WorldStateSnapshot, "acoustic"> & {
+  acoustic: AcousticSnapshot | null;
+};
+
+type StateListener = (state: CampusStateSnapshot) => void;
 type LeaveListener = () => void;
 
 export type CampusConnection = {
@@ -105,6 +111,7 @@ export async function joinCampus(
             serverTick: message.serverTick,
             players: message.players,
             proximity: message.proximity,
+            acoustic: parseAcousticSnapshot(message.acoustic),
           });
         }
       }
@@ -166,4 +173,79 @@ function parseServerMessage(data: unknown): ServerMessage | null {
   } catch {
     return null;
   }
+}
+
+export function parseAcousticSnapshot(value: unknown): AcousticSnapshot | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const revision = value.revision;
+  const environment = value.environment;
+  const allowedPeerSessionIds = value.allowedPeerSessionIds;
+  const audiblePeers = value.audiblePeers;
+
+  if (
+    !Number.isSafeInteger(revision) ||
+    (revision as number) < 0 ||
+    !isRecord(environment) ||
+    typeof environment.label !== "string" ||
+    environment.label.length === 0 ||
+    environment.label.length > 64 ||
+    !isAcousticMode(environment.mode) ||
+    !(environment.zoneId === null || isCampusZoneId(environment.zoneId)) ||
+    (environment.mode === "private" && environment.zoneId === null) ||
+    !Array.isArray(allowedPeerSessionIds) ||
+    !Array.isArray(audiblePeers)
+  ) {
+    return null;
+  }
+
+  if (
+    !allowedPeerSessionIds.every(isSessionId) ||
+    new Set(allowedPeerSessionIds).size !== allowedPeerSessionIds.length
+  ) {
+    return null;
+  }
+
+  const allowedIdentities = new Set(allowedPeerSessionIds);
+  const parsedPeers = audiblePeers.filter(isProximityPeer);
+
+  if (
+    parsedPeers.length !== audiblePeers.length ||
+    new Set(parsedPeers.map((peer) => peer.sessionId)).size !== parsedPeers.length ||
+    parsedPeers.some((peer) => !allowedIdentities.has(peer.sessionId))
+  ) {
+    return null;
+  }
+
+  return {
+    revision: revision as number,
+    environment: {
+      zoneId: environment.zoneId as AcousticSnapshot["environment"]["zoneId"],
+      label: environment.label,
+      mode: environment.mode,
+    },
+    allowedPeerSessionIds: [...allowedPeerSessionIds],
+    audiblePeers: parsedPeers,
+  };
+}
+
+function isProximityPeer(value: unknown): value is AcousticSnapshot["audiblePeers"][number] {
+  return (
+    isRecord(value) &&
+    isSessionId(value.sessionId) &&
+    typeof value.distance === "number" &&
+    Number.isFinite(value.distance) &&
+    value.distance >= 0 &&
+    (value.band === "close" || value.band === "nearby")
+  );
+}
+
+function isSessionId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 128;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

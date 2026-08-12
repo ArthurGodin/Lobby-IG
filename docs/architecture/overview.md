@@ -26,6 +26,18 @@ O snapshot de proximidade controla quais publicações remotas são assinadas e 
 microfone. O Phaser não conhece mídia; `apps/web/src/media` encapsula LiveKit e React apresenta
 consentimento, mute, autoplay, reconexão e erro. Falha da mídia não afeta movimento ou mapa.
 
+O snapshot acústico é separado da proximidade física. O servidor deriva o ambiente pelos pés
+autoritativos do avatar e envia, para cada sessão, as identidades permitidas e o subconjunto
+audível. Áreas abertas conversam entre si; uma zona privada conversa somente consigo mesma.
+O publicador restringe no LiveKit quem pode assinar sua faixa, enquanto o receptor continua
+usando assinatura seletiva e ganho por distância. Mudanças de permissão são aplicadas somente
+quando a lista autorizada muda, não a cada tick de movimento.
+
+Dados acústicos ausentes ou inválidos fecham a mídia: faixas remotas são removidas e o microfone
+local é desligado. O radar continua mostrando distância física e a casca React identifica o
+ambiente atual. Essa separação permite que o futuro editor ADM altere `acousticMode` sem acoplar
+Phaser ao WebRTC.
+
 ## Mundo pixel art
 
 `packages/game-core` também é a fonte canônica do campus de 48×34 tiles: camadas, zonas,

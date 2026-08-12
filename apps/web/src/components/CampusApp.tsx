@@ -1,4 +1,5 @@
 import type {
+  AcousticEnvironmentSnapshot,
   PlayerColor,
   PlayerSnapshot,
   ProximityPeerSnapshot,
@@ -8,7 +9,9 @@ import { isPlayerColor, pickPlayerColor, sanitizeDisplayName } from "@ig-campus/
 import { PROXIMITY_RADIUS } from "@ig-campus/game-core";
 import {
   AudioLines,
+  DoorOpen,
   LocateFixed,
+  LockKeyhole,
   Map as MapIcon,
   Mic,
   MicOff,
@@ -43,6 +46,7 @@ export function CampusApp() {
   const connectAbortRef = useRef<AbortController | null>(null);
   const lastPanelUpdateAtRef = useRef(0);
   const overviewEnabledRef = useRef(false);
+  const acousticEnvironmentRef = useRef<AcousticEnvironmentSnapshot | null>(null);
   const latestSceneStateRef = useRef<{
     players: PlayerSnapshot[];
     proximity: ProximitySnapshot;
@@ -59,7 +63,44 @@ export function CampusApp() {
   const [selfSessionId, setSelfSessionId] = useState<string | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [overviewEnabled, setOverviewEnabled] = useState(false);
+  const [acousticEnvironment, setAcousticEnvironment] =
+    useState<AcousticEnvironmentSnapshot | null>(null);
+  const [acousticAnnouncement, setAcousticAnnouncement] = useState("");
   const campusMedia = useCampusMedia();
+
+  const updateAcousticEnvironment = useCallback(
+    (nextEnvironment: AcousticEnvironmentSnapshot | null) => {
+      const previousEnvironment = acousticEnvironmentRef.current;
+      const previousKey = previousEnvironment
+        ? `${previousEnvironment.zoneId ?? "commons"}:${previousEnvironment.mode}:${previousEnvironment.label}`
+        : null;
+      const nextKey = nextEnvironment
+        ? `${nextEnvironment.zoneId ?? "commons"}:${nextEnvironment.mode}:${nextEnvironment.label}`
+        : null;
+
+      if (previousKey === nextKey) {
+        return;
+      }
+
+      acousticEnvironmentRef.current = nextEnvironment;
+      setAcousticEnvironment(nextEnvironment);
+
+      if (!previousEnvironment || !nextEnvironment) {
+        setAcousticAnnouncement("");
+      } else if (previousEnvironment.mode === "open" && nextEnvironment.mode === "private") {
+        setAcousticAnnouncement("Você entrou em uma conversa privada.");
+      } else if (previousEnvironment.mode === "private" && nextEnvironment.mode === "open") {
+        setAcousticAnnouncement("Você voltou para uma área aberta.");
+      } else if (
+        previousEnvironment.mode === "private" &&
+        nextEnvironment.mode === "private" &&
+        previousEnvironment.zoneId !== nextEnvironment.zoneId
+      ) {
+        setAcousticAnnouncement(`Você entrou na conversa privada: ${nextEnvironment.label}.`);
+      }
+    },
+    [],
+  );
 
   const self = useMemo(
     () => players.find((player) => player.sessionId === selfSessionId) ?? null,
@@ -75,6 +116,7 @@ export function CampusApp() {
     roomRef.current?.leave();
     roomRef.current = null;
     latestSceneStateRef.current = null;
+    updateAcousticEnvironment(null);
     await campusMedia.disconnect();
 
     const currentScene = getCampusScene(gameRef.current);
@@ -109,7 +151,8 @@ export function CampusApp() {
           proximity: state.proximity,
         };
         getCampusScene(gameRef.current)?.syncPlayers(nextPlayers, state.proximity);
-        campusMedia.syncProximity(state.proximity);
+        campusMedia.syncAcoustics(state.acoustic);
+        updateAcousticEnvironment(state.acoustic?.environment ?? null);
 
         const now = performance.now();
 
@@ -130,6 +173,7 @@ export function CampusApp() {
         setSelfSessionId(null);
         setPlayers([]);
         setProximity({ radius: PROXIMITY_RADIUS, peers: [] });
+        updateAcousticEnvironment(null);
         const scene = getCampusScene(gameRef.current);
         scene?.setSelfSessionId(null);
         scene?.syncPlayers([], { radius: PROXIMITY_RADIUS, peers: [] });
@@ -143,10 +187,16 @@ export function CampusApp() {
 
       console.error(error);
       roomRef.current = null;
+      updateAcousticEnvironment(null);
       void campusMedia.disconnect();
       setConnectionState("error");
     }
-  }, [campusMedia.connect, campusMedia.disconnect, campusMedia.syncProximity]);
+  }, [
+    campusMedia.connect,
+    campusMedia.disconnect,
+    campusMedia.syncAcoustics,
+    updateAcousticEnvironment,
+  ]);
 
   useEffect(() => {
     profileRef.current = profile;
@@ -227,6 +277,7 @@ export function CampusApp() {
     getCampusScene(gameRef.current)?.setOverview(false);
     setPlayers([]);
     setProximity({ radius: PROXIMITY_RADIUS, peers: [] });
+    updateAcousticEnvironment(null);
     void connect();
   };
 
@@ -357,6 +408,36 @@ export function CampusApp() {
             ) : null}
           </section>
 
+          <section
+            className={`acoustic-zone-card acoustic-zone-card--${
+              acousticEnvironment?.mode ?? "unknown"
+            }`}
+            aria-label="Ambiente acústico atual"
+          >
+            <div className="acoustic-zone-card__icon">
+              {acousticEnvironment?.mode === "private" ? (
+                <LockKeyhole aria-hidden="true" size={17} />
+              ) : (
+                <DoorOpen aria-hidden="true" size={18} />
+              )}
+            </div>
+            <div>
+              <h2 className="section-kicker">Ambiente atual</h2>
+              <strong>{acousticEnvironment?.label ?? "Verificando privacidade"}</strong>
+              <span>
+                {acousticEnvironment
+                  ? acousticEnvironment.mode === "private"
+                    ? "Conversa privada"
+                    : "Área aberta"
+                  : "Áudio fechado por segurança"}
+              </span>
+            </div>
+          </section>
+
+          <p className="sr-only" aria-live="polite">
+            {acousticAnnouncement}
+          </p>
+
           <section className="status-card">
             <h2 className="section-kicker">Posição no mapa</h2>
             <strong>{self ? `${Math.round(self.x)}, ${Math.round(self.y)}` : "aguardando"}</strong>
@@ -453,17 +534,19 @@ function mediaHelpText(status: Parameters<typeof canToggleMicrophone>[0]): strin
       return "O mapa continua disponível durante a conexão.";
     case "error":
       return "O mapa continua funcionando. Confira o LiveKit local.";
+    case "privacy-error":
+      return "Seu microfone foi desligado para proteger a conversa.";
     default:
       return "Inicie a mídia local para conversar.";
   }
 }
 
 function proximityAudioLabel(status: Parameters<typeof canToggleMicrophone>[0]): string {
-  if (status === "unavailable" || status === "error") {
+  if (status === "unavailable" || status === "error" || status === "privacy-error") {
     return "A proximidade continua funcionando sem áudio.";
   }
 
-  return "O volume acompanha a distância entre os avatares.";
+  return "O áudio combina ambiente e distância.";
 }
 
 function getCampusScene(game: Phaser.Game | null): CampusScene | null {

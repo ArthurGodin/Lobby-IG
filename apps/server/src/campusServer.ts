@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import {
+  type AcousticSnapshot,
   createIdleInput,
   type MovementInput,
   type PlayerSnapshot,
@@ -10,6 +11,7 @@ import {
   sanitizeDisplayName,
 } from "@ig-campus/contracts";
 import {
+  buildAcousticPolicy,
   getAvailableSpawnPoint,
   getFacingDirection,
   getProximityPeer,
@@ -28,6 +30,8 @@ const MAX_BUFFERED_BYTES = 64 * 1_024;
 const MAX_SIMULATION_DELTA_MS = 100;
 
 type PlayerSession = {
+  acousticRevision: number;
+  acousticFingerprint: string | null;
   socket: WebSocket;
   input: MovementInput;
   lastInputAt: number;
@@ -73,6 +77,8 @@ export function createCampusServer(options: CampusServerOptions = {}): CampusSer
     };
 
     sessions.set(sessionId, {
+      acousticRevision: 0,
+      acousticFingerprint: null,
       socket,
       player,
       input: createIdleInput(),
@@ -169,6 +175,7 @@ export function createCampusServer(options: CampusServerOptions = {}): CampusSer
         serverTick,
         players,
         proximity: buildProximitySnapshot(session.player, players),
+        acoustic: buildVersionedAcousticSnapshot(session, players),
       });
     }
   }
@@ -218,6 +225,24 @@ export function buildProximitySnapshot(
   return {
     radius: PROXIMITY_RADIUS,
     peers,
+  };
+}
+
+function buildVersionedAcousticSnapshot(
+  session: PlayerSession,
+  players: PlayerSnapshot[],
+): AcousticSnapshot {
+  const policy = buildAcousticPolicy(session.player, players);
+  const fingerprint = JSON.stringify(policy);
+
+  if (fingerprint !== session.acousticFingerprint) {
+    session.acousticRevision += 1;
+    session.acousticFingerprint = fingerprint;
+  }
+
+  return {
+    revision: session.acousticRevision,
+    ...policy,
   };
 }
 

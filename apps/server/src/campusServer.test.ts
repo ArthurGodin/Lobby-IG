@@ -157,7 +157,48 @@ describe("servidor do campus", () => {
       betaState.proximity.peers.map((peer) => peer.sessionId),
       [alphaId],
     );
+    assert.equal(alphaState.acoustic.environment.mode, "open");
+    assert.equal(alphaState.acoustic.environment.zoneId, "patio");
+    assert.deepEqual(alphaState.acoustic.allowedPeerSessionIds, [betaId]);
+    assert.deepEqual(
+      alphaState.acoustic.audiblePeers.map((peer) => peer.sessionId),
+      [betaId],
+    );
+    assert.ok(alphaState.acoustic.revision >= 1);
     assert.ok(alphaState.serverTick >= 0);
+  });
+
+  test("remove uma desconexão das permissões acústicas seguintes", async () => {
+    const server = createCampusServer();
+    servers.push(server);
+    const runningServer = await server.listen(0);
+    const alpha = await connectClient(runningServer.websocketUrl, "Alpha");
+    const beta = await connectClient(runningServer.websocketUrl, "Beta");
+    const together = await waitForMessage(
+      alpha,
+      (message) => message.type === "state" && hasPlayers(message, ["Alpha", "Beta"]),
+    );
+    assert.equal(together.type, "state");
+    const betaId =
+      together.type === "state"
+        ? together.players.find((player) => player.name === "Beta")?.sessionId
+        : undefined;
+    assert.ok(betaId);
+
+    beta.socket.close();
+    const afterLeave = await waitForMessage(
+      alpha,
+      (message) =>
+        message.type === "state" &&
+        message.players.every((player) => player.name !== "Beta") &&
+        !message.acoustic.allowedPeerSessionIds.includes(betaId) &&
+        message.acoustic.revision > together.acoustic.revision,
+    );
+
+    assert.equal(afterLeave.type, "state");
+    if (afterLeave.type === "state") {
+      assert.ok(afterLeave.acoustic.revision > together.acoustic.revision);
+    }
   });
 
   test("responde com erro a uma mensagem malformada e continua vivo", async () => {
