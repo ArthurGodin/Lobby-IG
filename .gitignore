@@ -1,0 +1,15 @@
+.agents/
+node_modules/
+dist/
+.turbo/
+.vite/
+coverage/
+playwright-report/
+test-results/
+.env
+.env.*
+!.env.example
+*.log
+*.tsbuildinfo
+Thumbs.db
+.DS_Store
