@@ -1,7 +1,12 @@
-import type { PlayerColor, PlayerSnapshot } from "@ig-campus/contracts";
-import { pickPlayerColor, sanitizeDisplayName } from "@ig-campus/contracts";
-import { MAP_HEIGHT, MAP_WIDTH } from "@ig-campus/game-core";
-import { Mic, MicOff, RadioTower, RefreshCw, UsersRound } from "lucide-react";
+import type {
+  PlayerColor,
+  PlayerSnapshot,
+  ProximityPeerSnapshot,
+  ProximitySnapshot,
+} from "@ig-campus/contracts";
+import { isPlayerColor, pickPlayerColor, sanitizeDisplayName } from "@ig-campus/contracts";
+import { MAP_HEIGHT, MAP_WIDTH, PROXIMITY_RADIUS } from "@ig-campus/game-core";
+import { AudioLines, MicOff, RadioTower, RefreshCw, UsersRound } from "lucide-react";
 import type Phaser from "phaser";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CampusScene } from "../game/CampusScene";
@@ -12,6 +17,7 @@ import { getCampusServerUrl, joinCampus, sendMovement } from "../lib/campusClien
 type ConnectionState = "connecting" | "connected" | "offline" | "error";
 
 const STORAGE_KEY = "ig-campus-profile";
+const PANEL_UPDATE_INTERVAL_MS = 250;
 
 type LocalProfile = {
   name: string;
@@ -22,40 +28,78 @@ export function CampusApp() {
   const gameHostRef = useRef<HTMLDivElement | null>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const roomRef = useRef<Awaited<ReturnType<typeof joinCampus>> | null>(null);
+  const connectAbortRef = useRef<AbortController | null>(null);
+  const lastPanelUpdateAtRef = useRef(0);
 
   const [profile, setProfile] = useState<LocalProfile>(() => loadProfile());
+  const [nameDraft, setNameDraft] = useState(profile.name);
   const profileRef = useRef(profile);
   const [players, setPlayers] = useState<PlayerSnapshot[]>([]);
+  const [proximity, setProximity] = useState<ProximitySnapshot>({
+    radius: PROXIMITY_RADIUS,
+    peers: [],
+  });
   const [selfSessionId, setSelfSessionId] = useState<string | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
-  const [micEnabled, setMicEnabled] = useState(false);
 
   const self = useMemo(
     () => players.find((player) => player.sessionId === selfSessionId) ?? null,
     [players, selfSessionId],
   );
+  const proximityBySessionId = useMemo(
+    () => new Map(proximity.peers.map((peer) => [peer.sessionId, peer])),
+    [proximity.peers],
+  );
 
   const connect = useCallback(async () => {
+    connectAbortRef.current?.abort();
+    roomRef.current?.leave();
+    roomRef.current = null;
+
+    const abortController = new AbortController();
+    connectAbortRef.current = abortController;
     setConnectionState("connecting");
+    lastPanelUpdateAtRef.current = 0;
 
     try {
-      const room = await joinCampus(profileRef.current);
+      const room = await joinCampus(profileRef.current, abortController.signal);
+
+      if (abortController.signal.aborted) {
+        room.leave();
+        return;
+      }
+
       roomRef.current = room;
       setSelfSessionId(room.sessionId);
       setConnectionState("connected");
       getCampusScene(gameRef.current)?.setSelfSessionId(room.sessionId);
 
       room.onStateChange((state) => {
-        const nextPlayers = readPlayersFromState(state);
-        setPlayers(nextPlayers);
-        getCampusScene(gameRef.current)?.syncPlayers(nextPlayers);
+        const nextPlayers = [...state.players].sort((a, b) => a.name.localeCompare(b.name));
+        getCampusScene(gameRef.current)?.syncPlayers(nextPlayers, state.proximity);
+
+        const now = performance.now();
+
+        if (now - lastPanelUpdateAtRef.current >= PANEL_UPDATE_INTERVAL_MS) {
+          lastPanelUpdateAtRef.current = now;
+          setPlayers(nextPlayers);
+          setProximity(state.proximity);
+        }
       });
 
       room.onLeave(() => {
+        if (roomRef.current !== room) {
+          return;
+        }
+
         roomRef.current = null;
         setConnectionState("offline");
       });
     } catch (error) {
+      if (abortController.signal.aborted) {
+        return;
+      }
+
       console.error(error);
       roomRef.current = null;
       setConnectionState("error");
@@ -83,6 +127,8 @@ export function CampusApp() {
     void connect();
 
     return () => {
+      connectAbortRef.current?.abort();
+      connectAbortRef.current = null;
       roomRef.current?.leave();
       roomRef.current = null;
     };
@@ -94,20 +140,23 @@ export function CampusApp() {
     });
   }, []);
 
-  const handleNameChange = (name: string) => {
+  const handleNameCommit = () => {
+    const name = sanitizeDisplayName(nameDraft);
     const nextProfile = {
       ...profile,
-      name: sanitizeDisplayName(name),
+      name,
     };
 
     persistProfile(nextProfile);
+    profileRef.current = nextProfile;
     setProfile(nextProfile);
+    setNameDraft(name);
+    roomRef.current?.updateProfile(nextProfile);
   };
 
   const handleReconnect = () => {
-    roomRef.current?.leave();
-    roomRef.current = null;
     setPlayers([]);
+    setProximity({ radius: PROXIMITY_RADIUS, peers: [] });
     void connect();
   };
 
@@ -119,53 +168,88 @@ export function CampusApp() {
           <h1>Campus</h1>
         </div>
 
-        <div className={`connection-pill connection-pill--${connectionState}`}>
-          <RadioTower size={16} />
+        <div
+          aria-live="polite"
+          className={`connection-pill connection-pill--${connectionState}`}
+          role="status"
+        >
+          <RadioTower aria-hidden="true" size={16} />
           <span>{connectionLabel(connectionState)}</span>
         </div>
       </header>
 
       <section className="campus-workspace">
-        <div className="map-frame" style={{ aspectRatio: `${MAP_WIDTH} / ${MAP_HEIGHT}` }}>
+        <div
+          aria-label={getMapDescription(self, proximity)}
+          className="map-frame"
+          role="img"
+          style={{ aspectRatio: `${MAP_WIDTH} / ${MAP_HEIGHT}` }}
+        >
           <div ref={gameHostRef} className="game-host" />
         </div>
 
         <aside className="campus-panel" aria-label="Painel do campus">
           <section className="identity-box">
             <div>
-              <p className="section-kicker">Sua presenca</p>
+              <label className="section-kicker" htmlFor="display-name">
+                Sua presença
+              </label>
               <input
-                aria-label="Seu nome no campus"
+                autoComplete="off"
                 className="name-input"
+                id="display-name"
                 maxLength={24}
-                value={profile.name}
-                onChange={(event) => handleNameChange(event.target.value)}
+                name="displayName"
+                spellCheck={false}
+                value={nameDraft}
+                onBlur={handleNameCommit}
+                onChange={(event) => setNameDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.currentTarget.blur();
+                  }
+
+                  if (event.key === "Escape") {
+                    setNameDraft(profile.name);
+                    event.currentTarget.blur();
+                  }
+                }}
               />
             </div>
 
             <button
-              className={`icon-button ${micEnabled ? "icon-button--active" : ""}`}
-              title={
-                micEnabled ? "Microfone marcado como ligado" : "Microfone marcado como desligado"
-              }
+              aria-label="Microfone ainda indisponível neste protótipo"
+              className="icon-button"
+              disabled
+              title="O áudio real entra no próximo corte"
               type="button"
-              onClick={() => setMicEnabled((enabled) => !enabled)}
             >
-              {micEnabled ? <Mic size={18} /> : <MicOff size={18} />}
+              <MicOff aria-hidden="true" size={18} />
             </button>
           </section>
 
           <section className="status-card">
-            <p className="section-kicker">Local</p>
+            <h2 className="section-kicker">Posição no mapa</h2>
             <strong>{self ? `${Math.round(self.x)}, ${Math.round(self.y)}` : "aguardando"}</strong>
             <span>{getCampusServerUrl()}</span>
           </section>
 
+          <section className="proximity-card" aria-live="polite">
+            <div className="proximity-card__icon">
+              <AudioLines aria-hidden="true" size={18} />
+            </div>
+            <div>
+              <h2 className="section-kicker">Proximidade visual</h2>
+              <strong>{proximityLabel(proximity.peers)}</strong>
+              <span>O áudio real ainda não está ativo.</span>
+            </div>
+          </section>
+
           <section className="people-list">
             <div className="people-list__header">
-              <p className="section-kicker">Pessoas</p>
+              <h2 className="section-kicker">Pessoas</h2>
               <span>
-                <UsersRound size={14} />
+                <UsersRound aria-hidden="true" size={14} />
                 {players.length}
               </span>
             </div>
@@ -173,23 +257,31 @@ export function CampusApp() {
             {players.length === 0 ? (
               <p className="empty-state">Conectando ao campus local.</p>
             ) : (
-              players.map((player) => (
-                <article
-                  className={player.sessionId === selfSessionId ? "person person--self" : "person"}
-                  key={player.sessionId}
-                >
-                  <span className="avatar-dot" style={{ backgroundColor: player.color }} />
-                  <div>
-                    <strong>{player.name}</strong>
-                    <span>{player.moving ? "andando" : "parado"}</span>
-                  </div>
-                </article>
-              ))
+              players.map((player) => {
+                const peer = proximityBySessionId.get(player.sessionId);
+                return (
+                  <article
+                    className={getPersonClassName(player.sessionId, selfSessionId, peer)}
+                    key={player.sessionId}
+                  >
+                    <span className="avatar-dot" style={{ backgroundColor: player.color }} />
+                    <div>
+                      <strong>{player.name}</strong>
+                      <span>{getPersonStatus(player, selfSessionId, peer)}</span>
+                    </div>
+                  </article>
+                );
+              })
             )}
           </section>
 
-          <button className="reconnect-button" type="button" onClick={handleReconnect}>
-            <RefreshCw size={16} />
+          <button
+            className="reconnect-button"
+            disabled={connectionState === "connecting"}
+            type="button"
+            onClick={handleReconnect}
+          >
+            <RefreshCw aria-hidden="true" size={16} />
             Reconectar
           </button>
         </aside>
@@ -205,11 +297,6 @@ function getCampusScene(game: Phaser.Game | null): CampusScene | null {
 
   const scene = game.scene.getScene("CampusScene");
   return scene instanceof CampusScene ? scene : null;
-}
-
-function readPlayersFromState(state: unknown): PlayerSnapshot[] {
-  const maybeState = state as { players?: PlayerSnapshot[] };
-  return [...(maybeState.players ?? [])].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function loadProfile(): LocalProfile {
@@ -231,7 +318,7 @@ function loadProfile(): LocalProfile {
     const name = sanitizeDisplayName(parsed.name);
     return {
       name,
-      color: parsed.color ?? pickPlayerColor(name),
+      color: isPlayerColor(parsed.color) ? parsed.color : pickPlayerColor(name),
     };
   } catch {
     persistProfile(fallback);
@@ -257,4 +344,53 @@ function connectionLabel(state: ConnectionState): string {
   }
 
   return "erro";
+}
+
+function proximityLabel(peers: ProximityPeerSnapshot[]): string {
+  if (peers.length === 0) {
+    return "Ninguém no alcance";
+  }
+
+  if (peers.length === 1) {
+    return "1 pessoa no alcance";
+  }
+
+  return `${peers.length} pessoas no alcance`;
+}
+
+function getPersonClassName(
+  sessionId: string,
+  selfSessionId: string | null,
+  peer?: ProximityPeerSnapshot,
+): string {
+  if (sessionId === selfSessionId) {
+    return "person person--self";
+  }
+
+  return peer ? `person person--${peer.band}` : "person";
+}
+
+function getPersonStatus(
+  player: PlayerSnapshot,
+  selfSessionId: string | null,
+  peer?: ProximityPeerSnapshot,
+): string {
+  if (player.sessionId === selfSessionId) {
+    return player.moving ? "você · andando" : "você";
+  }
+
+  if (!peer) {
+    return "fora do alcance";
+  }
+
+  const meters = Math.max(1, Math.round(peer.distance / 32));
+  return `${peer.band === "close" ? "perto" : "no alcance"} · ${meters} m`;
+}
+
+function getMapDescription(self: PlayerSnapshot | null, proximity: ProximitySnapshot): string {
+  if (!self) {
+    return "Mapa do Campus Inforgeneses carregando.";
+  }
+
+  return `Mapa do Campus. Você está na posição ${Math.round(self.x)}, ${Math.round(self.y)}. ${proximityLabel(proximity.peers)}.`;
 }

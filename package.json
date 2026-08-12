@@ -8,6 +8,7 @@
     "dev": "pnpm --parallel --filter @ig-campus/server --filter @ig-campus/web dev",
     "build": "pnpm --filter @ig-campus/contracts build && pnpm --filter @ig-campus/game-core build && pnpm --filter @ig-campus/server build && pnpm --filter @ig-campus/web build",
     "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm --filter @ig-campus/server test",
     "lint": "biome check .",
     "format": "biome format --write ."
   },

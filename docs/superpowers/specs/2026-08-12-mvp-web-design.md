@@ -110,6 +110,7 @@ que controlara o audio espacial.
   que estejam dentro deles;
 - o painel lateral mostrara as mesmas faixas em texto, sem afirmar que existe audio real;
 - nenhum microfone sera capturado neste corte.
+- o MVP sera jogavel com teclado em desktop; controles por toque nao fazem parte deste corte.
 
 A regra de distancia ficara em `packages/game-core`, separada do Phaser e do servidor, para
 ser reutilizada pelo ganho de audio quando o LiveKit entrar. O protocolo enviara um tick

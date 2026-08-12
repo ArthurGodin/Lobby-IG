@@ -29,7 +29,7 @@ export type JoinOptions = {
 export type PlayerSnapshot = {
   sessionId: string;
   name: string;
-  color: string;
+  color: PlayerColor;
   x: number;
   y: number;
   facing: Direction;
@@ -37,11 +37,30 @@ export type PlayerSnapshot = {
   sequence: number;
 };
 
+export type ProximityBand = "close" | "nearby";
+
+export type ProximityPeerSnapshot = {
+  sessionId: string;
+  distance: number;
+  band: ProximityBand;
+};
+
+export type ProximitySnapshot = {
+  radius: number;
+  peers: ProximityPeerSnapshot[];
+};
+
+export type WorldStateSnapshot = {
+  serverTick: number;
+  players: PlayerSnapshot[];
+  proximity: ProximitySnapshot;
+};
+
 export type ConnectionStatus = "connecting" | "connected" | "offline" | "error";
 
 export type ClientMessage =
   | {
-      type: "join";
+      type: "profile";
       payload: JoinOptions;
     }
   | {
@@ -56,7 +75,9 @@ export type ServerMessage =
     }
   | {
       type: "state";
+      serverTick: number;
       players: PlayerSnapshot[];
+      proximity: ProximitySnapshot;
     }
   | {
       type: "error";
@@ -95,4 +116,8 @@ export function pickPlayerColor(seed: string): PlayerColor {
   }
 
   return PLAYER_COLORS[hash % PLAYER_COLORS.length] ?? PLAYER_COLORS[0];
+}
+
+export function isPlayerColor(value: unknown): value is PlayerColor {
+  return typeof value === "string" && PLAYER_COLORS.some((color) => color === value);
 }

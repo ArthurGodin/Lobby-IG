@@ -32,7 +32,7 @@ button {
 
 .campus-shell {
   display: grid;
-  min-height: 100vh;
+  min-height: 100dvh;
   grid-template-rows: auto 1fr;
   gap: 18px;
   padding: 18px;
@@ -64,6 +64,7 @@ button {
 
 .eyebrow,
 .section-kicker {
+  margin: 0;
   color: #657469;
   font-size: 11px;
   font-weight: 800;
@@ -121,12 +122,15 @@ button {
 }
 
 .game-host {
+  min-width: 0;
+  overflow: hidden;
   width: 100%;
   height: 100%;
 }
 
 .game-host canvas {
   display: block;
+  max-width: 100%;
 }
 
 .campus-panel {
@@ -138,6 +142,7 @@ button {
 
 .identity-box,
 .status-card,
+.proximity-card,
 .people-list,
 .reconnect-button {
   border: 1px solid rgba(37, 54, 47, 0.18);
@@ -152,6 +157,11 @@ button {
   justify-content: space-between;
   gap: 12px;
   padding: 14px;
+}
+
+.identity-box > div {
+  min-width: 0;
+  flex: 1;
 }
 
 .name-input {
@@ -171,6 +181,11 @@ button {
   border-color: #2f7d5c;
 }
 
+.name-input:focus-visible {
+  border-color: #2f7d5c;
+  box-shadow: 0 3px 0 rgba(47, 125, 92, 0.18);
+}
+
 .icon-button {
   display: inline-grid;
   width: 42px;
@@ -186,6 +201,28 @@ button {
 .icon-button--active {
   background: #2f7d5c;
   color: #ffffff;
+}
+
+.icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.icon-button:not(:disabled):hover,
+.reconnect-button:not(:disabled):hover {
+  border-color: rgba(47, 125, 92, 0.52);
+  background: #e8eee4;
+}
+
+.icon-button:not(:disabled):active,
+.reconnect-button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.icon-button:focus-visible,
+.reconnect-button:focus-visible {
+  outline: 3px solid rgba(47, 125, 92, 0.34);
+  outline-offset: 2px;
 }
 
 .status-card {
@@ -206,6 +243,42 @@ button {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.proximity-card {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+}
+
+.proximity-card__icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid rgba(47, 125, 92, 0.22);
+  border-radius: 50%;
+  background: rgba(219, 238, 220, 0.76);
+  color: #2f7d5c;
+}
+
+.proximity-card strong,
+.proximity-card span {
+  display: block;
+}
+
+.proximity-card strong {
+  margin-top: 4px;
+  color: #25362f;
+  font-size: 14px;
+}
+
+.proximity-card span {
+  margin-top: 2px;
+  color: #657469;
+  font-size: 12px;
 }
 
 .people-list {
@@ -249,13 +322,26 @@ button {
   background: rgba(219, 238, 220, 0.72);
 }
 
+.person--close {
+  border-color: rgba(200, 155, 48, 0.58);
+  background: rgba(244, 230, 200, 0.78);
+}
+
+.person--nearby {
+  border-color: rgba(47, 125, 92, 0.38);
+  background: rgba(219, 238, 220, 0.48);
+}
+
 .person strong,
 .person span {
   display: block;
 }
 
 .person strong {
+  overflow: hidden;
   font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .person span {
@@ -287,6 +373,11 @@ button {
   padding: 0 14px;
 }
 
+.reconnect-button:disabled {
+  cursor: wait;
+  opacity: 0.56;
+}
+
 @media (max-width: 980px) {
   .campus-workspace {
     grid-template-columns: 1fr;
@@ -309,5 +400,13 @@ button {
 
   .connection-pill {
     width: 100%;
+  }
+
+  .map-frame {
+    min-height: 0;
+  }
+
+  .campus-panel {
+    min-height: 0;
   }
 }

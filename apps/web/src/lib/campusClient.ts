@@ -2,13 +2,13 @@ import type {
   ClientMessage,
   JoinOptions,
   MovementInput,
-  PlayerSnapshot,
   ServerMessage,
+  WorldStateSnapshot,
 } from "@ig-campus/contracts";
 
-const DEFAULT_SERVER_URL = "ws://localhost:2567";
+const DEFAULT_SERVER_URL = "ws://127.0.0.1:2567";
 
-type StateListener = (state: { players: PlayerSnapshot[] }) => void;
+type StateListener = (state: WorldStateSnapshot) => void;
 type LeaveListener = () => void;
 
 export type CampusConnection = {
@@ -16,6 +16,7 @@ export type CampusConnection = {
   onStateChange: (listener: StateListener) => () => void;
   onLeave: (listener: LeaveListener) => () => void;
   sendMovement: (input: MovementInput) => void;
+  updateProfile: (profile: JoinOptions) => void;
   leave: () => void;
 };
 
@@ -23,13 +24,32 @@ export function getCampusServerUrl(): string {
   return import.meta.env.VITE_CAMPUS_SERVER_URL ?? DEFAULT_SERVER_URL;
 }
 
-export async function joinCampus(options: JoinOptions): Promise<CampusConnection> {
+export async function joinCampus(
+  options: JoinOptions,
+  signal?: AbortSignal,
+): Promise<CampusConnection> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(getCampusServerUrl());
     const stateListeners = new Set<StateListener>();
     const leaveListeners = new Set<LeaveListener>();
     let connected = false;
     let settled = false;
+
+    const abortConnection = () => {
+      socket.close();
+
+      if (!settled) {
+        settled = true;
+        reject(new DOMException("Conexão cancelada.", "AbortError"));
+      }
+    };
+
+    if (signal?.aborted) {
+      abortConnection();
+      return;
+    }
+
+    signal?.addEventListener("abort", abortConnection, { once: true });
 
     const connection: CampusConnection = {
       sessionId: "",
@@ -44,13 +64,16 @@ export async function joinCampus(options: JoinOptions): Promise<CampusConnection
       sendMovement(input) {
         send(socket, { type: "move", payload: input });
       },
+      updateProfile(profile) {
+        send(socket, { type: "profile", payload: profile });
+      },
       leave() {
         socket.close();
       },
     };
 
     socket.addEventListener("open", () => {
-      send(socket, { type: "join", payload: options });
+      send(socket, { type: "profile", payload: options });
     });
 
     socket.addEventListener("message", (event) => {
@@ -74,7 +97,11 @@ export async function joinCampus(options: JoinOptions): Promise<CampusConnection
 
       if (message.type === "state") {
         for (const listener of stateListeners) {
-          listener({ players: message.players });
+          listener({
+            serverTick: message.serverTick,
+            players: message.players,
+            proximity: message.proximity,
+          });
         }
       }
 

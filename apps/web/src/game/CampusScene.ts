@@ -1,5 +1,13 @@
-import type { PlayerSnapshot } from "@ig-campus/contracts";
-import { MAP_HEIGHT, MAP_WIDTH, OBSTACLES, TILE_SIZE, ZONES } from "@ig-campus/game-core";
+import type { PlayerSnapshot, ProximityBand, ProximitySnapshot } from "@ig-campus/contracts";
+import {
+  CLOSE_PROXIMITY_RADIUS,
+  MAP_HEIGHT,
+  MAP_WIDTH,
+  OBSTACLES,
+  PROXIMITY_RADIUS,
+  TILE_SIZE,
+  ZONES,
+} from "@ig-campus/game-core";
 import Phaser from "phaser";
 
 export type CampusSceneData = {
@@ -17,6 +25,8 @@ const PLAYER_DEPTH = 20;
 
 export class CampusScene extends Phaser.Scene {
   private players = new Map<string, PlayerDisplay>();
+  private proximityBySessionId = new Map<string, ProximityBand>();
+  private proximityGraphics: Phaser.GameObjects.Graphics | null = null;
   private selfSessionId: string | null = null;
 
   constructor() {
@@ -27,6 +37,7 @@ export class CampusScene extends Phaser.Scene {
     this.selfSessionId = data?.selfSessionId ?? null;
     this.cameras.main.setBackgroundColor("#eef2e8");
     this.drawCampus();
+    this.proximityGraphics = this.add.graphics().setDepth(18);
   }
 
   setSelfSessionId(sessionId: string | null): void {
@@ -34,7 +45,8 @@ export class CampusScene extends Phaser.Scene {
     this.refreshPlayerDepths();
   }
 
-  syncPlayers(players: PlayerSnapshot[]): void {
+  syncPlayers(players: PlayerSnapshot[], proximity: ProximitySnapshot): void {
+    this.proximityBySessionId = new Map(proximity.peers.map((peer) => [peer.sessionId, peer.band]));
     const liveSessionIds = new Set(players.map((player) => player.sessionId));
 
     for (const player of players) {
@@ -42,7 +54,8 @@ export class CampusScene extends Phaser.Scene {
       display.container.setPosition(player.x, player.y);
       display.body.setFillStyle(Phaser.Display.Color.HexStringToColor(player.color).color);
       display.label.setText(player.name);
-      display.container.setAlpha(player.sessionId === this.selfSessionId ? 1 : 0.88);
+      this.positionPlayerLabel(display.label, player);
+      this.stylePlayer(display, player.sessionId);
       display.container.setDepth(PLAYER_DEPTH + Math.round(player.y));
 
       if (player.moving) {
@@ -58,6 +71,8 @@ export class CampusScene extends Phaser.Scene {
         this.players.delete(sessionId);
       }
     }
+
+    this.drawProximityRings(players);
   }
 
   private drawCampus(): void {
@@ -164,7 +179,7 @@ export class CampusScene extends Phaser.Scene {
         align: "center",
         backgroundColor: "rgba(255,255,255,0.78)",
         color: "#1f2c27",
-        fixedWidth: 96,
+        fixedWidth: 120,
         fontFamily: "ui-sans-serif, system-ui, sans-serif",
         fontSize: "12px",
         padding: { x: 6, y: 4 },
@@ -180,8 +195,67 @@ export class CampusScene extends Phaser.Scene {
   }
 
   private refreshPlayerDepths(): void {
-    for (const display of this.players.values()) {
-      display.container.setAlpha(0.88);
+    for (const [sessionId, display] of this.players) {
+      this.stylePlayer(display, sessionId);
     }
+  }
+
+  private drawProximityRings(players: PlayerSnapshot[]): void {
+    const graphics = this.proximityGraphics;
+    graphics?.clear();
+
+    if (!graphics || !this.selfSessionId) {
+      return;
+    }
+
+    const self = players.find((player) => player.sessionId === this.selfSessionId);
+
+    if (!self) {
+      return;
+    }
+
+    graphics.fillStyle(0x2f7d5c, 0.035);
+    graphics.fillCircle(self.x, self.y, PROXIMITY_RADIUS);
+    graphics.lineStyle(2, 0x2f7d5c, 0.34);
+    graphics.strokeCircle(self.x, self.y, PROXIMITY_RADIUS);
+    graphics.fillStyle(0xc89b30, 0.045);
+    graphics.fillCircle(self.x, self.y, CLOSE_PROXIMITY_RADIUS);
+    graphics.lineStyle(2, 0xc89b30, 0.48);
+    graphics.strokeCircle(self.x, self.y, CLOSE_PROXIMITY_RADIUS);
+  }
+
+  private stylePlayer(display: PlayerDisplay, sessionId: string): void {
+    if (sessionId === this.selfSessionId) {
+      display.container.setAlpha(1);
+      display.body.setStrokeStyle(3, 0xffffff, 0.96);
+      return;
+    }
+
+    const band = this.proximityBySessionId.get(sessionId);
+
+    if (band === "close") {
+      display.container.setAlpha(1);
+      display.body.setStrokeStyle(3, 0xc89b30, 1);
+      return;
+    }
+
+    if (band === "nearby") {
+      display.container.setAlpha(0.94);
+      display.body.setStrokeStyle(2, 0x2f7d5c, 0.88);
+      return;
+    }
+
+    display.container.setAlpha(0.58);
+    display.body.setStrokeStyle(0, 0x000000, 0);
+  }
+
+  private positionPlayerLabel(label: Phaser.GameObjects.Text, player: PlayerSnapshot): void {
+    const horizontalMargin = label.width / 2 + 6;
+    const labelCenterX = Phaser.Math.Clamp(
+      player.x,
+      horizontalMargin,
+      MAP_WIDTH - horizontalMargin,
+    );
+    label.setX(labelCenterX - player.x);
   }
 }

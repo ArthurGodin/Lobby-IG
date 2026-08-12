@@ -31,10 +31,15 @@ http://localhost:5173
 
 Abra duas abas para simular dois funcionarios no mesmo campus.
 
+Este MVP e jogavel em computador com teclado. A interface se adapta a telas pequenas, mas
+controles por toque ficam para um corte futuro porque o uso principal do campus e durante o
+trabalho em desktop.
+
 ## Scripts
 
 ```powershell
 pnpm dev
+pnpm test
 pnpm typecheck
 pnpm build
 pnpm lint
@@ -47,4 +52,6 @@ O desenvolvimento local nao exige pagamento. O primeiro custo real so aparece qu
 
 ## Proximo corte
 
-Depois que movimento e colisao estiverem estaveis, o proximo corte tecnico e conectar LiveKit local para microfone e audio espacial por proximidade. Colyseus pode voltar depois se o protocolo multiplayer ficar grande o suficiente para justificar o framework.
+O mapa ja calcula e exibe proximidade sem capturar microfone. O proximo corte tecnico e
+conectar LiveKit local e usar essa mesma regra para controlar audio espacial. Colyseus pode
+voltar depois se o protocolo multiplayer ficar grande o suficiente para justificar o framework.
