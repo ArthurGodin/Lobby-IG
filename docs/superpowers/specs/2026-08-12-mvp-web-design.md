@@ -95,3 +95,44 @@ O corte inicial esta aceito quando:
 - paredes/obstaculos simples bloqueiam passagem;
 - `pnpm typecheck` passa;
 - `pnpm build` passa.
+
+## Corte 2 Aprovado: Proximidade Visual
+
+Antes de integrar microfone e WebRTC, o campus tera uma simulacao visual da mesma regra
+que controlara o audio espacial.
+
+- o servidor sera a fonte de verdade da proximidade entre jogadores;
+- o alcance audivel inicial sera de 6 tiles (192 pixels no mapa);
+- ate 3 tiles, a pessoa estara na faixa `perto`; entre 3 e 6 tiles, na faixa
+  `alcance`; depois disso, `fora`;
+- cada cliente recebera apenas a sua propria lista de colegas no alcance;
+- o mapa desenhara dois circulos discretos ao redor do jogador local e destacara colegas
+  que estejam dentro deles;
+- o painel lateral mostrara as mesmas faixas em texto, sem afirmar que existe audio real;
+- nenhum microfone sera capturado neste corte.
+
+A regra de distancia ficara em `packages/game-core`, separada do Phaser e do servidor, para
+ser reutilizada pelo ganho de audio quando o LiveKit entrar. O protocolo enviara um tick
+monotonico e um snapshot personalizado de proximidade. O calculo sera O(n²), adequado ao
+piloto pequeno; otimizacao espacial so sera adicionada quando uma medicao justificar.
+
+### Robustez incluida neste corte
+
+Como proximidade depende de movimento confiavel, o mesmo corte tambem inclui:
+
+- validacao estrita de mensagens WebSocket e cores permitidas;
+- limite pequeno de payload e tratamento de erro dos sockets;
+- heartbeat de movimento e timeout para impedir avatar andando sozinho;
+- escolha de spawn livre;
+- edicao de nome sem capturar WASD dentro do campo;
+- testes automatizados das regras puras e do protocolo.
+
+### Validacao do corte 2
+
+- duas abas exibem estados de proximidade coerentes e personalizados;
+- atravessar os limites de 3 e 6 tiles muda o destaque visual e o texto;
+- nenhuma interface sugere que o microfone real ja esta funcionando;
+- entradas malformadas nao alteram o mundo nem derrubam o servidor;
+- movimento expira quando o cliente para de renovar a entrada;
+- `pnpm test`, `pnpm typecheck`, `pnpm lint` e `pnpm build` passam;
+- o fluxo principal e revisado em viewport desktop e mobile.
