@@ -1,5 +1,6 @@
 .agents/
 .dev-logs/
+.superpowers/
 node_modules/
 dist/
 .turbo/
