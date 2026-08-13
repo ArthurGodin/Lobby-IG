@@ -31,6 +31,8 @@ type PlayerDisplay = {
   mask: Phaser.GameObjects.Image;
   maskFramesAvailable: boolean;
   moving: boolean;
+  speaking: boolean;
+  speakingHalo: Phaser.GameObjects.Arc;
   facing: PlayerSnapshot["facing"];
   baseFramesAvailable: boolean;
 };
@@ -49,6 +51,7 @@ const LABEL_STACK_DISTANCE = 48;
 export class CampusScene extends Phaser.Scene {
   private players = new Map<string, PlayerDisplay>();
   private proximityBySessionId = new Map<string, ProximityBand>();
+  private speakingIdentities = new Set<string>();
   private proximityGraphics: Phaser.GameObjects.Graphics | null = null;
   private ready = false;
   private pendingSnapshot: {
@@ -154,6 +157,11 @@ export class CampusScene extends Phaser.Scene {
         display.maskFramesAvailable,
       );
       display.container.setDepth(PLAYER_DEPTH + Math.round(display.container.y));
+
+      if (display.speaking) {
+        const pulse = (Math.sin(this.time.now / 115) + 1) / 2;
+        display.speakingHalo.setAlpha(0.58 + pulse * 0.32).setScale(1 + pulse * 0.08);
+      }
     }
 
     this.positionPlayerLabels();
@@ -180,6 +188,14 @@ export class CampusScene extends Phaser.Scene {
 
     this.applyCameraMode();
     this.refreshPlayerStyles();
+  }
+
+  setSpeakingIdentities(identities: readonly string[]): void {
+    this.speakingIdentities = new Set(identities);
+
+    if (this.ready) {
+      this.refreshPlayerStyles();
+    }
   }
 
   syncPlayers(players: PlayerSnapshot[], proximity: ProximitySnapshot): void {
@@ -261,6 +277,10 @@ export class CampusScene extends Phaser.Scene {
     const marker = this.add
       .circle(0, -AVATAR_FRAME_HEIGHT * AVATAR_DISPLAY_SCALE * 0.48, 5, 0xffffff, 0)
       .setStrokeStyle(2, 0xffffff, 0);
+    const speakingHalo = this.add
+      .circle(0, -AVATAR_FRAME_HEIGHT * AVATAR_DISPLAY_SCALE * 0.5, 24, 0x5fe0a6, 0.08)
+      .setStrokeStyle(3, 0x35d391, 0.92)
+      .setVisible(false);
     const shadow = this.add.ellipse(0, -4, 26, 9, 0x132019, 0.28);
     const base = this.add
       .image(0, 0, baseTextureKey)
@@ -292,7 +312,14 @@ export class CampusScene extends Phaser.Scene {
         padding: { x: 6, y: 4 },
       })
       .setOrigin(0.5);
-    const container = this.add.container(player.x, player.y, [marker, shadow, base, mask, label]);
+    const container = this.add.container(player.x, player.y, [
+      marker,
+      speakingHalo,
+      shadow,
+      base,
+      mask,
+      label,
+    ]);
     container.setSize(AVATAR_FRAME_WIDTH * AVATAR_DISPLAY_SCALE, AVATAR_FRAME_HEIGHT * ART_SCALE);
 
     const display: PlayerDisplay = {
@@ -307,6 +334,8 @@ export class CampusScene extends Phaser.Scene {
       mask,
       maskFramesAvailable: hasMask,
       moving: player.moving,
+      speaking: false,
+      speakingHalo,
     };
     this.players.set(player.sessionId, display);
     this.stylePlayer(display, player.sessionId);
@@ -344,6 +373,12 @@ export class CampusScene extends Phaser.Scene {
   }
 
   private stylePlayer(display: PlayerDisplay, sessionId: string): void {
+    const isSpeaking = this.speakingIdentities.has(sessionId);
+    display.speaking = isSpeaking;
+    display.speakingHalo.setVisible(isSpeaking);
+    display.label
+      .setBackgroundColor(isSpeaking ? "rgba(218,248,229,0.96)" : "rgba(247,249,243,0.9)")
+      .setColor(isSpeaking ? "#155f43" : "#1f2c27");
     display.label.setVisible(!this.overviewEnabled);
     display.marker.setVisible(this.overviewEnabled);
 

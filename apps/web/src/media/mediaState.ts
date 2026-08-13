@@ -13,14 +13,18 @@ export type CampusMediaStatus =
 export type CampusMediaState = {
   status: CampusMediaStatus;
   playbackBlocked: boolean;
+  speakingIdentities: string[];
 };
 
 export const INITIAL_MEDIA_STATE: CampusMediaState = {
   status: "unavailable",
   playbackBlocked: false,
+  speakingIdentities: [],
 };
 
-export function mediaStatusLabel(state: CampusMediaState): string {
+export function mediaStatusLabel(
+  state: Pick<CampusMediaState, "status" | "playbackBlocked">,
+): string {
   switch (state.status) {
     case "connecting":
       return "Conectando o áudio";

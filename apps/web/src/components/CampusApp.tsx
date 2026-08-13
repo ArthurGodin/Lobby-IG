@@ -46,6 +46,7 @@ export function CampusApp() {
   const connectAbortRef = useRef<AbortController | null>(null);
   const lastPanelUpdateAtRef = useRef(0);
   const overviewEnabledRef = useRef(false);
+  const speakingIdentitiesRef = useRef<readonly string[]>([]);
   const acousticEnvironmentRef = useRef<AcousticEnvironmentSnapshot | null>(null);
   const latestSceneStateRef = useRef<{
     players: PlayerSnapshot[];
@@ -121,6 +122,7 @@ export function CampusApp() {
 
     const currentScene = getCampusScene(gameRef.current);
     currentScene?.setSelfSessionId(null);
+    currentScene?.setSpeakingIdentities([]);
     currentScene?.syncPlayers([], { radius: PROXIMITY_RADIUS, peers: [] });
 
     const abortController = new AbortController();
@@ -151,6 +153,7 @@ export function CampusApp() {
           proximity: state.proximity,
         };
         getCampusScene(gameRef.current)?.syncPlayers(nextPlayers, state.proximity);
+        campusMedia.syncSpatialPositions(room.sessionId, nextPlayers);
         campusMedia.syncAcoustics(state.acoustic);
         updateAcousticEnvironment(state.acoustic?.environment ?? null);
 
@@ -176,6 +179,7 @@ export function CampusApp() {
         updateAcousticEnvironment(null);
         const scene = getCampusScene(gameRef.current);
         scene?.setSelfSessionId(null);
+        scene?.setSpeakingIdentities([]);
         scene?.syncPlayers([], { radius: PROXIMITY_RADIUS, peers: [] });
         void campusMedia.disconnect();
         setConnectionState("offline");
@@ -195,6 +199,7 @@ export function CampusApp() {
     campusMedia.connect,
     campusMedia.disconnect,
     campusMedia.syncAcoustics,
+    campusMedia.syncSpatialPositions,
     updateAcousticEnvironment,
   ]);
 
@@ -210,6 +215,7 @@ export function CampusApp() {
     gameRef.current = createCampusGame(gameHostRef.current, (scene) => {
       scene.setSelfSessionId(roomRef.current?.sessionId ?? null);
       scene.setOverview(overviewEnabledRef.current);
+      scene.setSpeakingIdentities(speakingIdentitiesRef.current);
 
       const latestState = latestSceneStateRef.current;
 
@@ -223,6 +229,12 @@ export function CampusApp() {
       gameRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    const speakingIdentities = campusMedia.state.speakingIdentities;
+    speakingIdentitiesRef.current = speakingIdentities;
+    getCampusScene(gameRef.current)?.setSpeakingIdentities(speakingIdentities);
+  }, [campusMedia.state.speakingIdentities]);
 
   useEffect(() => {
     void connect();
@@ -372,11 +384,10 @@ export function CampusApp() {
             </div>
 
             <button
+              aria-describedby="media-status-description"
               aria-label={microphoneActionLabel(campusMedia.state.status)}
               aria-pressed={campusMedia.state.status === "active"}
-              className={`icon-button${
-                campusMedia.state.status === "active" ? " icon-button--active" : ""
-              }`}
+              className={`microphone-button microphone-button--${campusMedia.state.status}`}
               disabled={!canToggleMicrophone(campusMedia.state.status)}
               onClick={() => void campusMedia.toggleMicrophone()}
               title={microphoneActionLabel(campusMedia.state.status)}
@@ -387,6 +398,7 @@ export function CampusApp() {
               ) : (
                 <MicOff aria-hidden="true" size={18} />
               )}
+              <span>{microphoneControlLabel(campusMedia.state.status)}</span>
             </button>
           </section>
 
@@ -394,7 +406,7 @@ export function CampusApp() {
             <div>
               <h2 className="section-kicker">Áudio espacial</h2>
               <strong aria-live="polite">{mediaStatusLabel(campusMedia.state)}</strong>
-              <span>{mediaHelpText(campusMedia.state.status)}</span>
+              <span id="media-status-description">{mediaHelpText(campusMedia.state.status)}</span>
             </div>
             {campusMedia.state.playbackBlocked ? (
               <button
@@ -469,15 +481,29 @@ export function CampusApp() {
             ) : (
               players.map((player) => {
                 const peer = proximityBySessionId.get(player.sessionId);
+                const isSpeaking = campusMedia.state.speakingIdentities.includes(player.sessionId);
+                const personStatus = getPersonStatus(player, selfSessionId, peer, isSpeaking);
                 return (
                   <article
-                    className={getPersonClassName(player.sessionId, selfSessionId, peer)}
+                    aria-label={`${player.name}, ${personStatus}`}
+                    className={getPersonClassName(
+                      player.sessionId,
+                      selfSessionId,
+                      peer,
+                      isSpeaking,
+                    )}
                     key={player.sessionId}
                   >
-                    <span className="avatar-dot" style={{ backgroundColor: player.color }} />
+                    <span
+                      aria-hidden="true"
+                      className={`avatar-presence${isSpeaking ? " avatar-presence--speaking" : ""}`}
+                    >
+                      <span className="avatar-dot" style={{ backgroundColor: player.color }} />
+                      {isSpeaking ? <AudioLines size={13} /> : null}
+                    </span>
                     <div>
                       <strong>{player.name}</strong>
-                      <span>{getPersonStatus(player, selfSessionId, peer)}</span>
+                      <span>{personStatus}</span>
                     </div>
                   </article>
                 );
@@ -515,6 +541,28 @@ function microphoneActionLabel(status: Parameters<typeof canToggleMicrophone>[0]
   }
 
   return mediaStatusLabel({ status, playbackBlocked: false });
+}
+
+function microphoneControlLabel(status: Parameters<typeof canToggleMicrophone>[0]): string {
+  switch (status) {
+    case "active":
+      return "Ativo";
+    case "muted":
+      return "Mutado";
+    case "microphone-off":
+      return "Ativar";
+    case "requesting-permission":
+      return "Permissão";
+    case "connecting":
+    case "reconnecting":
+      return "Conectando";
+    case "privacy-error":
+      return "Protegido";
+    case "permission-denied":
+      return "Bloqueado";
+    default:
+      return "Indisponível";
+  }
 }
 
 function mediaHelpText(status: Parameters<typeof canToggleMicrophone>[0]): string {
@@ -621,29 +669,35 @@ function getPersonClassName(
   sessionId: string,
   selfSessionId: string | null,
   peer?: ProximityPeerSnapshot,
+  isSpeaking = false,
 ): string {
+  const speakingClass = isSpeaking ? " person--speaking" : "";
+
   if (sessionId === selfSessionId) {
-    return "person person--self";
+    return `person person--self${speakingClass}`;
   }
 
-  return peer ? `person person--${peer.band}` : "person";
+  return peer ? `person person--${peer.band}${speakingClass}` : `person${speakingClass}`;
 }
 
 function getPersonStatus(
   player: PlayerSnapshot,
   selfSessionId: string | null,
   peer?: ProximityPeerSnapshot,
+  isSpeaking = false,
 ): string {
   if (player.sessionId === selfSessionId) {
-    return player.moving ? "você · andando" : "você";
+    const localStatus = player.moving ? "você · andando" : "você";
+    return isSpeaking ? `${localStatus} · falando agora` : localStatus;
   }
 
   if (!peer) {
-    return "fora do alcance";
+    return isSpeaking ? "falando agora · fora do alcance" : "fora do alcance";
   }
 
   const meters = Math.max(1, Math.round(peer.distance / 32));
-  return `${peer.band === "close" ? "perto" : "no alcance"} · ${meters} m`;
+  const proximityStatus = `${peer.band === "close" ? "perto" : "no alcance"} · ${meters} m`;
+  return isSpeaking ? `falando agora · ${proximityStatus}` : proximityStatus;
 }
 
 function getMapDescription(self: PlayerSnapshot | null, proximity: ProximitySnapshot): string {

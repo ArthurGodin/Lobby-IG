@@ -1,4 +1,4 @@
-import type { AcousticSnapshot, MediaAccessSnapshot } from "@ig-campus/contracts";
+import type { AcousticSnapshot, MediaAccessSnapshot, PlayerSnapshot } from "@ig-campus/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CampusMediaController } from "../media/CampusMediaController";
 import { type CampusMediaState, INITIAL_MEDIA_STATE } from "../media/mediaState";
@@ -9,6 +9,10 @@ export function useCampusMedia() {
   const controllerRef = useRef<CampusMediaController | null>(null);
   const generationRef = useRef(0);
   const pendingAcousticRef = useRef<AcousticSnapshot | null>(null);
+  const pendingSpatialRef = useRef<{
+    selfSessionId: string | null;
+    players: readonly PlayerSnapshot[];
+  }>({ selfSessionId: null, players: [] });
 
   const connect = useCallback(async (access: MediaAccessSnapshot) => {
     const generation = ++generationRef.current;
@@ -19,6 +23,7 @@ export function useCampusMedia() {
       setState({
         status: access.reason === "not_configured" ? "unavailable" : "error",
         playbackBlocked: false,
+        speakingIdentities: [],
       });
       return;
     }
@@ -33,12 +38,17 @@ export function useCampusMedia() {
     controllerRef.current = controller;
     await controller.connect(access);
     controller.syncAcoustics(pendingAcousticRef.current);
+    controller.syncSpatialPositions(
+      pendingSpatialRef.current.selfSessionId,
+      pendingSpatialRef.current.players,
+    );
   }, []);
   const disconnect = useCallback(async () => {
     generationRef.current += 1;
     const controller = controllerRef.current;
     controllerRef.current = null;
     pendingAcousticRef.current = null;
+    pendingSpatialRef.current = { selfSessionId: null, players: [] };
     await controller?.disconnect();
     setState(INITIAL_MEDIA_STATE);
   }, []);
@@ -49,6 +59,13 @@ export function useCampusMedia() {
   const toggleMicrophone = useCallback(() => {
     return controllerRef.current?.toggleMicrophone() ?? Promise.resolve();
   }, []);
+  const syncSpatialPositions = useCallback(
+    (selfSessionId: string | null, players: readonly PlayerSnapshot[]) => {
+      pendingSpatialRef.current = { selfSessionId, players };
+      controllerRef.current?.syncSpatialPositions(selfSessionId, players);
+    },
+    [],
+  );
   const startAudio = useCallback(() => {
     return controllerRef.current?.startAudio() ?? Promise.resolve();
   }, []);
@@ -66,6 +83,7 @@ export function useCampusMedia() {
     startAudio,
     state,
     syncAcoustics,
+    syncSpatialPositions,
     toggleMicrophone,
   };
 }

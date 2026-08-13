@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { canToggleMicrophone, mediaStatusLabel } from "./mediaState";
+import { canToggleMicrophone, INITIAL_MEDIA_STATE, mediaStatusLabel } from "./mediaState";
 
 describe("estado da interface de audio", () => {
   test("habilita o controle apenas em estados seguros", () => {
@@ -27,5 +27,9 @@ describe("estado da interface de audio", () => {
       mediaStatusLabel({ status: "privacy-error", playbackBlocked: false }),
       "Privacidade do áudio indisponível",
     );
+  });
+
+  test("inicia sem participantes falando", () => {
+    assert.deepEqual(INITIAL_MEDIA_STATE.speakingIdentities, []);
   });
 });

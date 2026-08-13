@@ -277,40 +277,67 @@ button {
   box-shadow: 0 3px 0 rgba(47, 125, 92, 0.18);
 }
 
-.icon-button {
-  display: inline-grid;
-  width: 42px;
+.microphone-button {
+  display: inline-flex;
+  min-width: 78px;
   height: 42px;
   flex: 0 0 auto;
-  place-items: center;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   border: 1px solid rgba(37, 54, 47, 0.2);
   border-radius: 8px;
   background: #f6f7f1;
   color: #415249;
+  font-size: 11px;
+  font-weight: 850;
+  padding: 0 10px;
 }
 
-.icon-button--active {
+.microphone-button--active {
+  border-color: #2f7d5c;
   background: #2f7d5c;
   color: #ffffff;
 }
 
-.icon-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.58;
+.microphone-button--muted,
+.microphone-button--microphone-off {
+  border-color: rgba(200, 155, 48, 0.52);
+  background: #fff6dd;
+  color: #755819;
 }
 
-.icon-button:not(:disabled):hover,
+.microphone-button--permission-denied,
+.microphone-button--privacy-error,
+.microphone-button--error {
+  border-color: rgba(185, 86, 66, 0.42);
+  background: #fff0ec;
+  color: #8f3f30;
+}
+
+.microphone-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.microphone-button:not(:disabled):hover,
 .reconnect-button:not(:disabled):hover {
   border-color: rgba(47, 125, 92, 0.52);
   background: #e8eee4;
 }
 
-.icon-button:not(:disabled):active,
+.microphone-button--active:not(:disabled):hover {
+  border-color: #245f47;
+  background: #245f47;
+  color: #ffffff;
+}
+
+.microphone-button:not(:disabled):active,
 .reconnect-button:not(:disabled):active {
   transform: translateY(1px);
 }
 
-.icon-button:focus-visible,
+.microphone-button:focus-visible,
 .audio-playback-button:focus-visible,
 .camera-button:focus-visible,
 .reconnect-button:focus-visible {
@@ -543,7 +570,7 @@ button {
 
 .person {
   display: grid;
-  grid-template-columns: 14px 1fr;
+  grid-template-columns: 30px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   border: 1px solid rgba(37, 54, 47, 0.1);
@@ -567,6 +594,17 @@ button {
   background: rgba(219, 238, 220, 0.48);
 }
 
+.person--speaking {
+  border-color: rgba(30, 156, 105, 0.72);
+  box-shadow:
+    inset 3px 0 0 #24a970,
+    0 8px 22px rgba(36, 169, 112, 0.1);
+}
+
+.person--speaking strong {
+  color: #146b48;
+}
+
 .person strong,
 .person span {
   display: block;
@@ -585,10 +623,46 @@ button {
 }
 
 .avatar-dot {
+  display: block;
   width: 14px;
   height: 14px;
   border-radius: 50%;
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.82);
+}
+
+.avatar-presence {
+  position: relative;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+}
+
+.avatar-presence svg {
+  position: absolute;
+  color: #168b5d;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.88));
+  right: -1px;
+  top: -3px;
+}
+
+.avatar-presence--speaking .avatar-dot {
+  animation: voice-presence-pulse 1s steps(2, end) infinite;
+  box-shadow:
+    0 0 0 4px rgba(47, 211, 143, 0.24),
+    0 0 0 7px rgba(47, 211, 143, 0.08);
+}
+
+@keyframes voice-presence-pulse {
+  50% {
+    transform: scale(1.16);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .avatar-presence--speaking .avatar-dot {
+    animation: none;
+  }
 }
 
 .empty-state {
