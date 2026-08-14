@@ -3,6 +3,8 @@ import {
   type ClientMessage,
   isPlayerColor,
   type JoinOptions,
+  MAX_INTERACTION_ID_LENGTH,
+  MAX_INTERACTION_REQUEST_ID_LENGTH,
   type MovementInput,
 } from "@ig-campus/contracts";
 
@@ -24,8 +26,8 @@ export function parseClientMessage(rawMessage: string): ClientMessage | null {
       return input ? { type: "move", payload: input } : null;
     }
 
-    if (parsed.type === "focus") {
-      return parseFocusToggle(parsed.payload);
+    if (parsed.type === "interact") {
+      return parseInteraction(parsed.payload);
     }
 
     return null;
@@ -34,12 +36,23 @@ export function parseClientMessage(rawMessage: string): ClientMessage | null {
   }
 }
 
-function parseFocusToggle(value: Record<string, unknown>): ClientMessage | null {
-  if (typeof value.enabled !== "boolean") {
+function parseInteraction(value: Record<string, unknown>): ClientMessage | null {
+  if (
+    !isSafeIdentifier(value.requestId, MAX_INTERACTION_REQUEST_ID_LENGTH) ||
+    !isSafeIdentifier(value.interactableId, MAX_INTERACTION_ID_LENGTH) ||
+    !isSafeIdentifier(value.actionId, MAX_INTERACTION_ID_LENGTH)
+  ) {
     return null;
   }
 
-  return { type: "focus", payload: { enabled: value.enabled } };
+  return {
+    type: "interact",
+    payload: {
+      requestId: value.requestId,
+      interactableId: value.interactableId,
+      actionId: value.actionId,
+    },
+  };
 }
 
 export function parseMovementInput(value: unknown): MovementInput | null {
@@ -109,4 +122,13 @@ function parseAvatarAppearance(value: unknown): AvatarAppearance | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSafeIdentifier(value: unknown, maxLength: number): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maxLength &&
+    /^[A-Za-z0-9:_-]+$/.test(value)
+  );
 }

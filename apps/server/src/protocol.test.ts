@@ -7,12 +7,12 @@ import {
   CAMPUS_MAP,
   CLOSE_PROXIMITY_RADIUS,
   canStandAt,
-  FOCUS_DESKS,
   getAvailableSpawnPoint,
-  getNearestFocusDesk,
+  getInteractionCandidates,
   getPlayerCollider,
   getProximityBand,
   getZoneAtPosition,
+  INTERACTABLES,
   isMoving,
   MAP_HEIGHT,
   MAP_WIDTH,
@@ -23,6 +23,8 @@ import {
   validateCampusMap,
 } from "@ig-campus/game-core";
 import { parseClientMessage } from "./protocol.js";
+
+const FOCUS_DESKS = INTERACTABLES.filter((interactable) => interactable.kind === "focus_desk");
 
 describe("protocolo do campus", () => {
   test("aceita apenas um perfil com cor conhecida", () => {
@@ -89,13 +91,20 @@ describe("protocolo do campus", () => {
     );
   });
 
-  test("aceita somente o booleano explícito da cortina de foco", () => {
-    assert.deepEqual(
-      parseClientMessage(JSON.stringify({ type: "focus", payload: { enabled: true } })),
-      { type: "focus", payload: { enabled: true } },
-    );
+  test("aceita uma interação identificada e rejeita identificadores perigosos", () => {
+    const payload = {
+      requestId: "request-1",
+      interactableId: "dev-01",
+      actionId: "enter_focus",
+    };
+    assert.deepEqual(parseClientMessage(JSON.stringify({ type: "interact", payload })), {
+      type: "interact",
+      payload,
+    });
     assert.equal(
-      parseClientMessage(JSON.stringify({ type: "focus", payload: { enabled: "true" } })),
+      parseClientMessage(
+        JSON.stringify({ type: "interact", payload: { ...payload, actionId: "<script>" } }),
+      ),
       null,
     );
   });
@@ -148,13 +157,37 @@ describe("regras puras do mundo", () => {
     );
     assert.deepEqual(validateCampusMap(CAMPUS_MAP), []);
     assert.equal(FOCUS_DESKS.length, 12);
+    assert.equal(CAMPUS_MAP.interactables.length, 12);
   });
 
-  test("encontra deterministicamente a mesa dentro do raio", () => {
-    const desk = FOCUS_DESKS[0];
-    assert.ok(desk);
-    assert.equal(getNearestFocusDesk(desk.exitPosition)?.id, desk.id);
-    assert.equal(getNearestFocusDesk({ x: 240, y: 408 }), null);
+  test("ordena candidatos por disponibilidade, distância e id", () => {
+    const firstDesk = FOCUS_DESKS[0];
+    const secondDesk = FOCUS_DESKS[1];
+    assert.ok(firstDesk);
+    assert.ok(secondDesk);
+    const self = playerAt(
+      "self",
+      (firstDesk.interactionPosition.x + secondDesk.interactionPosition.x) / 2,
+      firstDesk.interactionPosition.y,
+    );
+    const candidates = getInteractionCandidates(self, [self]);
+    assert.deepEqual(
+      candidates.slice(0, 2).map((candidate) => candidate.interactable.id),
+      [firstDesk.id, secondDesk.id],
+    );
+
+    const occupant = playerAt("occupant", firstDesk.seatPosition.x, firstDesk.seatPosition.y);
+    occupant.focusMode = true;
+    occupant.focusDeskId = firstDesk.id;
+    const withOccupiedDesk = getInteractionCandidates(self, [self, occupant]);
+    assert.equal(withOccupiedDesk[0]?.interactable.id, secondDesk.id);
+    assert.equal(withOccupiedDesk.at(-1)?.unavailableReason, "occupied");
+
+    self.focusMode = true;
+    self.focusDeskId = firstDesk.id;
+    const exit = getInteractionCandidates(self, [self, occupant]);
+    assert.equal(exit.length, 1);
+    assert.equal(exit[0]?.actionId, "leave_focus");
   });
 
   test("rejeita mesas duplicadas e saídas bloqueadas", () => {
@@ -162,11 +195,11 @@ describe("regras puras do mundo", () => {
     assert.ok(firstDesk);
     const invalidMap = {
       ...CAMPUS_MAP,
-      focusDesks: [firstDesk, { ...firstDesk, exitPosition: { x: 0, y: 0 } }],
+      interactables: [firstDesk, { ...firstDesk, exitPosition: { x: 0, y: 0 } }],
     };
     const errors = validateCampusMap(invalidMap);
-    assert.ok(errors.some((error) => error.includes("mesa de foco duplicada")));
-    assert.ok(errors.some((error) => error.includes("saída ou raio inválido")));
+    assert.ok(errors.some((error) => error.includes("objeto interativo duplicado")));
+    assert.ok(errors.some((error) => error.includes("configuração de mesa de foco inválida")));
   });
 
   test("classifica as bordas de zona sem ambiguidade", () => {

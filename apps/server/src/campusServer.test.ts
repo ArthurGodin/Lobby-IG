@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
 import { createIdleInput, type MovementInput, type ServerMessage } from "@ig-campus/contracts";
-import { FOCUS_DESKS } from "@ig-campus/game-core";
+import { INTERACTABLES } from "@ig-campus/game-core";
 import WebSocket from "ws";
 import {
   type CampusServer,
@@ -17,6 +17,7 @@ type TestClient = {
 
 const servers: CampusServer[] = [];
 const clients: TestClient[] = [];
+const FOCUS_DESKS = INTERACTABLES.filter((interactable) => interactable.kind === "focus_desk");
 
 afterEach(async () => {
   for (const client of clients.splice(0)) {
@@ -131,7 +132,7 @@ describe("servidor do campus", () => {
     const runningServer = await server.listen(0);
     const client = await connectClient(runningServer.websocketUrl, "Lin");
 
-    client.socket.send(JSON.stringify({ type: "focus", payload: { enabled: true } }));
+    client.socket.send(JSON.stringify(interact("activate-focus", desk.id, "enter_focus")));
     const state = await waitForMessage(
       client,
       (message) =>
@@ -173,11 +174,19 @@ describe("servidor do campus", () => {
     servers.push(distantServer);
     const distantRunning = await distantServer.listen(0);
     const distant = await connectClient(distantRunning.websocketUrl, "Longe");
-    distant.socket.send(JSON.stringify({ type: "focus", payload: { enabled: true } }));
-    const tooFar = await waitForMessage(distant, (message) => message.type === "focus_result");
+    distant.socket.send(JSON.stringify(interact("distant-focus", desk.id, "enter_focus")));
+    const tooFar = await waitForMessage(
+      distant,
+      (message) => message.type === "interaction_result",
+    );
     assert.deepEqual(tooFar, {
-      type: "focus_result",
-      result: { outcome: "too_far", deskId: null, deskLabel: null },
+      type: "interaction_result",
+      result: {
+        requestId: "distant-focus",
+        interactableId: desk.id,
+        actionId: "enter_focus",
+        outcome: "too_far",
+      },
     });
 
     const server = createCampusServer({ spawnPointProvider: () => desk.exitPosition });
@@ -186,31 +195,34 @@ describe("servidor do campus", () => {
     const alpha = await connectClient(runningServer.websocketUrl, "Alpha");
     const beta = await connectClient(runningServer.websocketUrl, "Beta");
 
-    alpha.socket.send(JSON.stringify({ type: "focus", payload: { enabled: true } }));
+    alpha.socket.send(JSON.stringify(interact("alpha-enter", desk.id, "enter_focus")));
     await waitForMessage(
       alpha,
-      (message) => message.type === "focus_result" && message.result.outcome === "activated",
+      (message) =>
+        message.type === "interaction_result" && message.result.requestId === "alpha-enter",
     );
-    beta.socket.send(JSON.stringify({ type: "focus", payload: { enabled: true } }));
+    beta.socket.send(JSON.stringify(interact("beta-conflict", desk.id, "enter_focus")));
     const occupied = await waitForMessage(
       beta,
-      (message) => message.type === "focus_result" && message.result.outcome === "occupied",
+      (message) => message.type === "interaction_result" && message.result.outcome === "conflict",
     );
-    assert.equal(occupied.type, "focus_result");
+    assert.equal(occupied.type, "interaction_result");
 
-    alpha.socket.send(JSON.stringify({ type: "focus", payload: { enabled: false } }));
+    alpha.socket.send(JSON.stringify(interact("alpha-leave", desk.id, "leave_focus")));
     const released = await waitForMessage(
       alpha,
-      (message) => message.type === "focus_result" && message.result.outcome === "released",
+      (message) =>
+        message.type === "interaction_result" && message.result.requestId === "alpha-leave",
     );
-    assert.equal(released.type, "focus_result");
+    assert.equal(released.type, "interaction_result");
 
-    beta.socket.send(JSON.stringify({ type: "focus", payload: { enabled: true } }));
+    beta.socket.send(JSON.stringify(interact("beta-enter", desk.id, "enter_focus")));
     const activated = await waitForMessage(
       beta,
-      (message) => message.type === "focus_result" && message.result.outcome === "activated",
+      (message) =>
+        message.type === "interaction_result" && message.result.requestId === "beta-enter",
     );
-    assert.equal(activated.type, "focus_result");
+    assert.equal(activated.type, "interaction_result");
   });
 
   test("envia proximidade personalizada para dois clientes", async () => {
@@ -390,4 +402,11 @@ function hasPlayers(message: ServerMessage, expectedNames: string[]): boolean {
 
   const names = message.players.map((player) => player.name);
   return expectedNames.every((name) => names.includes(name));
+}
+
+function interact(requestId: string, interactableId: string, actionId: string) {
+  return {
+    type: "interact",
+    payload: { requestId, interactableId, actionId },
+  };
 }

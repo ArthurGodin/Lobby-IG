@@ -51,13 +51,31 @@ export type PlayerSnapshot = {
   sequence: number;
 };
 
-export const FOCUS_INTERACTION_OUTCOMES = ["activated", "released", "too_far", "occupied"] as const;
-export type FocusInteractionOutcome = (typeof FOCUS_INTERACTION_OUTCOMES)[number];
+export const MAX_INTERACTION_ID_LENGTH = 64;
+export const MAX_INTERACTION_REQUEST_ID_LENGTH = 64;
 
-export type FocusInteractionResult = {
-  outcome: FocusInteractionOutcome;
-  deskId: string | null;
-  deskLabel: string | null;
+export const INTERACTION_ACTION_IDS = ["enter_focus", "leave_focus"] as const;
+export type InteractionActionId = (typeof INTERACTION_ACTION_IDS)[number];
+
+export const INTERACTION_OUTCOMES = [
+  "succeeded",
+  "invalid_target",
+  "invalid_action",
+  "too_far",
+  "unavailable",
+  "forbidden",
+  "conflict",
+] as const;
+export type InteractionOutcome = (typeof INTERACTION_OUTCOMES)[number];
+
+export type InteractionRequest = {
+  requestId: string;
+  interactableId: string;
+  actionId: string;
+};
+
+export type InteractionResult = InteractionRequest & {
+  outcome: InteractionOutcome;
 };
 
 export type ProximityBand = "close" | "nearby";
@@ -125,10 +143,8 @@ export type ClientMessage =
       payload: MovementInput;
     }
   | {
-      type: "focus";
-      payload: {
-        enabled: boolean;
-      };
+      type: "interact";
+      payload: InteractionRequest;
     };
 
 export type ServerMessage =
@@ -149,8 +165,8 @@ export type ServerMessage =
       message: string;
     }
   | {
-      type: "focus_result";
-      result: FocusInteractionResult;
+      type: "interaction_result";
+      result: InteractionResult;
     };
 
 export function createIdleInput(sequence = 0): MovementInput {
@@ -199,8 +215,10 @@ export function isAcousticMode(value: unknown): value is AcousticMode {
   return typeof value === "string" && ACOUSTIC_MODES.some((mode) => mode === value);
 }
 
-export function isFocusInteractionOutcome(value: unknown): value is FocusInteractionOutcome {
-  return (
-    typeof value === "string" && FOCUS_INTERACTION_OUTCOMES.some((outcome) => outcome === value)
-  );
+export function isInteractionActionId(value: unknown): value is InteractionActionId {
+  return typeof value === "string" && INTERACTION_ACTION_IDS.some((actionId) => actionId === value);
+}
+
+export function isInteractionOutcome(value: unknown): value is InteractionOutcome {
+  return typeof value === "string" && INTERACTION_OUTCOMES.some((outcome) => outcome === value);
 }

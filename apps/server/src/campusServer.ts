@@ -15,8 +15,6 @@ import {
   getAvailableSpawnPoint,
   getFacingDirection,
   getFocusBarriers,
-  getFocusDeskById,
-  getNearestFocusDesk,
   getProximityPeer,
   isMoving,
   moveWithCollision,
@@ -24,6 +22,7 @@ import {
   SIMULATION_RATE,
 } from "@ig-campus/game-core";
 import { WebSocket, WebSocketServer } from "ws";
+import { createInteractionService } from "./interactionService.js";
 import { createUnavailableMediaAccessProvider, type MediaAccessProvider } from "./mediaAccess.js";
 import { parseClientMessage } from "./protocol.js";
 
@@ -54,6 +53,7 @@ export type CampusServerOptions = {
 export function createCampusServer(options: CampusServerOptions = {}): CampusServer {
   const sessions = new Map<string, PlayerSession>();
   const mediaAccessProvider = options.mediaAccessProvider ?? createUnavailableMediaAccessProvider();
+  const interactionService = createInteractionService();
   const httpServer = createHttpServer();
   const websocketServer = new WebSocketServer({
     server: httpServer,
@@ -130,11 +130,12 @@ export function createCampusServer(options: CampusServerOptions = {}): CampusSer
         return;
       }
 
-      if (message.type === "focus") {
-        if (message.payload.enabled) {
-          activateFocusDesk(session);
-        } else {
-          releaseFocusDesk(session);
+      if (message.type === "interact") {
+        const result = interactionService.execute(message.payload, session, [...sessions.values()]);
+        send(session.socket, { type: "interaction_result", result });
+
+        if (result.outcome === "succeeded") {
+          broadcastState();
         }
         return;
       }
@@ -153,6 +154,7 @@ export function createCampusServer(options: CampusServerOptions = {}): CampusSer
 
     socket.on("close", () => {
       sessions.delete(sessionId);
+      interactionService.forgetSession(sessionId);
       broadcastState();
     });
   });
@@ -203,82 +205,6 @@ export function createCampusServer(options: CampusServerOptions = {}): CampusSer
         acoustic: buildVersionedAcousticSnapshot(session, players),
       });
     }
-  }
-
-  function activateFocusDesk(session: PlayerSession): void {
-    if (session.player.focusMode && session.player.focusDeskId) {
-      const currentDesk = getFocusDeskById(session.player.focusDeskId);
-      send(session.socket, {
-        type: "focus_result",
-        result: {
-          outcome: "activated",
-          deskId: currentDesk?.id ?? null,
-          deskLabel: currentDesk?.label ?? null,
-        },
-      });
-      return;
-    }
-
-    const desk = getNearestFocusDesk(session.player);
-
-    if (!desk) {
-      send(session.socket, {
-        type: "focus_result",
-        result: { outcome: "too_far", deskId: null, deskLabel: null },
-      });
-      return;
-    }
-
-    const occupant = [...sessions.values()].find(
-      (candidate) =>
-        candidate.player.sessionId !== session.player.sessionId &&
-        candidate.player.focusDeskId === desk.id,
-    );
-
-    if (occupant) {
-      send(session.socket, {
-        type: "focus_result",
-        result: { outcome: "occupied", deskId: desk.id, deskLabel: desk.label },
-      });
-      return;
-    }
-
-    session.player.x = desk.seatPosition.x;
-    session.player.y = desk.seatPosition.y;
-    session.player.facing = desk.facing;
-    session.player.moving = false;
-    session.player.focusMode = true;
-    session.player.focusDeskId = desk.id;
-    session.input = createIdleInput(session.input.sequence);
-    send(session.socket, {
-      type: "focus_result",
-      result: { outcome: "activated", deskId: desk.id, deskLabel: desk.label },
-    });
-    broadcastState();
-  }
-
-  function releaseFocusDesk(session: PlayerSession): void {
-    const desk = getFocusDeskById(session.player.focusDeskId);
-    session.player.focusMode = false;
-    session.player.focusDeskId = null;
-    session.player.moving = false;
-    session.input = createIdleInput(session.input.sequence);
-
-    if (desk) {
-      session.player.x = desk.exitPosition.x;
-      session.player.y = desk.exitPosition.y;
-      session.player.facing = "down";
-    }
-
-    send(session.socket, {
-      type: "focus_result",
-      result: {
-        outcome: "released",
-        deskId: desk?.id ?? null,
-        deskLabel: desk?.label ?? null,
-      },
-    });
-    broadcastState();
   }
 
   return {

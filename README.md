@@ -11,7 +11,7 @@ O projeto continua 100% local e sem custo:
 - áudio por proximidade com LiveKit self-hosted local;
 - isolamento automático de conversas na Administração / Reitoria;
 - Cortina de Foco autoritativa: bloqueia áudio, movimento de aproximação e sinaliza Deep Work;
-- 12 estações interativas no Desenvolvimento, com `E` para sentar, reservar e sair do foco;
+- motor autoritativo de objetos interativos, usado pelas 12 estações do Desenvolvimento;
 - sem banco externo;
 - sem cloud;
 - sem serviço pago.
@@ -40,7 +40,9 @@ Abra duas abas para simular dois funcionários no mesmo campus. Use `WASD` ou as
 andar. O botão **Visão geral** enquadra todo o mapa e `Esc` volta ao avatar.
 
 Nas estações do Desenvolvimento, aproxime-se de uma cadeira e pressione `E` para sentar e entrar
-em foco. A mesa fica reservada até você pressionar `E` novamente ou desconectar.
+em foco. Se houver mais de uma ação ao alcance, `E` abre o seletor contextual: use `W`/`S` ou as
+setas, confirme com `E`/`Enter` e feche com `Esc`. O movimento pausa enquanto o seletor está
+aberto. A mesa fica reservada até você pressionar `E` novamente ou desconectar.
 
 Todos entram com o microfone desligado. O navegador só pede permissão depois que a pessoa clica
 em **Ativar microfone**. Para testar duas sessões no mesmo computador, use fones de ouvido para

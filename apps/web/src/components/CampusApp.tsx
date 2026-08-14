@@ -1,15 +1,16 @@
 import type {
   AcousticEnvironmentSnapshot,
-  FocusInteractionResult,
+  InteractionRequest,
   PlayerColor,
   PlayerSnapshot,
   ProximityPeerSnapshot,
   ProximitySnapshot,
 } from "@ig-campus/contracts";
 import { isPlayerColor, pickPlayerColor, sanitizeDisplayName } from "@ig-campus/contracts";
-import { getFocusDeskById, getNearestFocusDesk, PROXIMITY_RADIUS } from "@ig-campus/game-core";
+import { PROXIMITY_RADIUS } from "@ig-campus/game-core";
 import {
   AudioLines,
+  ChevronRight,
   DoorOpen,
   Focus,
   LocateFixed,
@@ -26,7 +27,14 @@ import type Phaser from "phaser";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CampusScene } from "../game/CampusScene";
 import { createCampusGame } from "../game/createCampusGame";
-import { bindMovementKeys } from "../game/input";
+import { bindMovementKeys, type MovementKeyBinding } from "../game/input";
+import {
+  buildInteractionOptions,
+  buildInteractionPanelContent,
+  createInteractionRequest,
+  getInteractionResultMessage,
+  type InteractionOption,
+} from "../interactions/interactionState";
 import { getCampusServerUrl, joinCampus, sendMovement } from "../lib/campusClient";
 import { canToggleMicrophone, mediaStatusLabel } from "../media/mediaState";
 import { useCampusMedia } from "./useCampusMedia";
@@ -48,6 +56,10 @@ export function CampusApp() {
   const connectAbortRef = useRef<AbortController | null>(null);
   const lastPanelUpdateAtRef = useRef(0);
   const overviewEnabledRef = useRef(false);
+  const interactionSelectorOpenRef = useRef(false);
+  const movementBindingRef = useRef<MovementKeyBinding | null>(null);
+  const interactionSelectorRef = useRef<HTMLDivElement | null>(null);
+  const pendingInteractionRef = useRef<InteractionRequest | null>(null);
   const speakingIdentitiesRef = useRef<readonly string[]>([]);
   const acousticEnvironmentRef = useRef<AcousticEnvironmentSnapshot | null>(null);
   const latestSceneStateRef = useRef<{
@@ -69,7 +81,10 @@ export function CampusApp() {
   const [acousticEnvironment, setAcousticEnvironment] =
     useState<AcousticEnvironmentSnapshot | null>(null);
   const [acousticAnnouncement, setAcousticAnnouncement] = useState("");
-  const [focusAnnouncement, setFocusAnnouncement] = useState("");
+  const [interactionAnnouncement, setInteractionAnnouncement] = useState("");
+  const [interactionSelectorOpen, setInteractionSelectorOpen] = useState(false);
+  const [selectedInteractionKey, setSelectedInteractionKey] = useState<string | null>(null);
+  const [pendingInteraction, setPendingInteraction] = useState<InteractionRequest | null>(null);
   const campusMedia = useCampusMedia();
 
   const updateAcousticEnvironment = useCallback(
@@ -110,15 +125,19 @@ export function CampusApp() {
     () => players.find((player) => player.sessionId === selfSessionId) ?? null,
     [players, selfSessionId],
   );
-  const focusMode = self?.focusMode ?? false;
-  const activeFocusDesk = getFocusDeskById(self?.focusDeskId ?? null);
-  const nearbyFocusDesk = self && !focusMode ? getNearestFocusDesk(self) : null;
-  const nearbyDeskOccupant = nearbyFocusDesk
-    ? players.find(
-        (player) => player.sessionId !== selfSessionId && player.focusDeskId === nearbyFocusDesk.id,
-      )
-    : null;
-  const canEnterFocus = Boolean(nearbyFocusDesk && !nearbyDeskOccupant);
+  const interactionOptions = useMemo(() => buildInteractionOptions(self, players), [players, self]);
+  const availableInteractionOptions = interactionOptions.filter((option) => option.available);
+  const primaryInteraction = availableInteractionOptions[0] ?? interactionOptions[0] ?? null;
+  const selectedInteractionIndex = Math.max(
+    0,
+    interactionOptions.findIndex((option) => option.key === selectedInteractionKey),
+  );
+  const selectedInteraction = interactionOptions[selectedInteractionIndex] ?? primaryInteraction;
+  const highlightedInteraction = interactionSelectorOpen ? selectedInteraction : primaryInteraction;
+  const interactionPanel = useMemo(
+    () => buildInteractionPanelContent(self, players, interactionOptions),
+    [interactionOptions, players, self],
+  );
   const proximityBySessionId = useMemo(
     () => new Map(proximity.peers.map((peer) => [peer.sessionId, peer])),
     [proximity.peers],
@@ -129,13 +148,19 @@ export function CampusApp() {
     roomRef.current?.leave();
     roomRef.current = null;
     latestSceneStateRef.current = null;
-    setFocusAnnouncement("");
+    interactionSelectorOpenRef.current = false;
+    pendingInteractionRef.current = null;
+    setInteractionAnnouncement("");
+    setInteractionSelectorOpen(false);
+    setSelectedInteractionKey(null);
+    setPendingInteraction(null);
     updateAcousticEnvironment(null);
     await campusMedia.disconnect();
 
     const currentScene = getCampusScene(gameRef.current);
     currentScene?.setSelfSessionId(null);
     currentScene?.setSpeakingIdentities([]);
+    currentScene?.setHighlightedInteractableId(null);
     currentScene?.syncPlayers([], { radius: PROXIMITY_RADIUS, peers: [] });
 
     const abortController = new AbortController();
@@ -179,9 +204,18 @@ export function CampusApp() {
         }
       });
 
-      room.onFocusResult((result) => {
-        setFocusAnnouncement(getFocusResultMessage(result));
-        if (result.outcome === "activated") {
+      room.onInteractionResult((result) => {
+        if (
+          pendingInteractionRef.current &&
+          pendingInteractionRef.current.requestId !== result.requestId
+        ) {
+          return;
+        }
+
+        pendingInteractionRef.current = null;
+        setPendingInteraction(null);
+        setInteractionAnnouncement(getInteractionResultMessage(result));
+        if (result.outcome === "succeeded" && result.actionId === "enter_focus") {
           void campusMedia.muteMicrophone();
         }
       });
@@ -196,11 +230,17 @@ export function CampusApp() {
         setSelfSessionId(null);
         setPlayers([]);
         setProximity({ radius: PROXIMITY_RADIUS, peers: [] });
-        setFocusAnnouncement("");
+        interactionSelectorOpenRef.current = false;
+        pendingInteractionRef.current = null;
+        setInteractionAnnouncement("");
+        setInteractionSelectorOpen(false);
+        setSelectedInteractionKey(null);
+        setPendingInteraction(null);
         updateAcousticEnvironment(null);
         const scene = getCampusScene(gameRef.current);
         scene?.setSelfSessionId(null);
         scene?.setSpeakingIdentities([]);
+        scene?.setHighlightedInteractableId(null);
         scene?.syncPlayers([], { radius: PROXIMITY_RADIUS, peers: [] });
         void campusMedia.disconnect();
         setConnectionState("offline");
@@ -271,14 +311,35 @@ export function CampusApp() {
   }, [campusMedia.disconnect, connect]);
 
   useEffect(() => {
-    return bindMovementKeys((input) => {
-      sendMovement(roomRef.current, input);
-    });
+    const binding = bindMovementKeys(
+      (input) => {
+        sendMovement(roomRef.current, input);
+      },
+      () => interactionSelectorOpenRef.current,
+    );
+    movementBindingRef.current = binding;
+
+    return () => {
+      binding.dispose();
+      movementBindingRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
+    getCampusScene(gameRef.current)?.setHighlightedInteractableId(
+      highlightedInteraction?.interactableId ?? null,
+    );
+  }, [highlightedInteraction?.interactableId]);
+
+  useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || !overviewEnabled || !self || isEditableTarget(event.target)) {
+      if (
+        event.key !== "Escape" ||
+        interactionSelectorOpen ||
+        !overviewEnabled ||
+        !self ||
+        isEditableTarget(event.target)
+      ) {
         return;
       }
 
@@ -289,7 +350,7 @@ export function CampusApp() {
 
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [overviewEnabled, self]);
+  }, [interactionSelectorOpen, overviewEnabled, self]);
 
   const handleNameCommit = () => {
     const name = sanitizeDisplayName(nameDraft);
@@ -311,7 +372,12 @@ export function CampusApp() {
     getCampusScene(gameRef.current)?.setOverview(false);
     setPlayers([]);
     setProximity({ radius: PROXIMITY_RADIUS, peers: [] });
-    setFocusAnnouncement("");
+    interactionSelectorOpenRef.current = false;
+    pendingInteractionRef.current = null;
+    setInteractionAnnouncement("");
+    setInteractionSelectorOpen(false);
+    setSelectedInteractionKey(null);
+    setPendingInteraction(null);
     updateAcousticEnvironment(null);
     void connect();
   };
@@ -323,43 +389,170 @@ export function CampusApp() {
     getCampusScene(gameRef.current)?.setOverview(nextOverviewEnabled);
   };
 
-  const handleFocusToggle = useCallback(() => {
-    if (!focusMode && !canEnterFocus) {
-      return;
-    }
+  const closeInteractionSelector = useCallback(() => {
+    interactionSelectorOpenRef.current = false;
+    setInteractionSelectorOpen(false);
+    setSelectedInteractionKey(null);
+  }, []);
 
-    setFocusAnnouncement("");
-    roomRef.current?.setFocusMode(!focusMode);
-  }, [canEnterFocus, focusMode]);
-
-  useEffect(() => {
-    const handleInteractionKey = (event: KeyboardEvent) => {
+  const submitInteraction = useCallback(
+    (option: InteractionOption) => {
       if (
-        event.key.toLowerCase() !== "e" ||
-        event.repeat ||
-        isEditableTarget(event.target) ||
+        !option.available ||
         connectionState !== "connected" ||
-        (!focusMode && !canEnterFocus)
+        pendingInteractionRef.current ||
+        !roomRef.current
       ) {
         return;
       }
 
-      event.preventDefault();
-      handleFocusToggle();
+      const request = createInteractionRequest(option);
+      pendingInteractionRef.current = request;
+      setPendingInteraction(request);
+      setInteractionAnnouncement("");
+      roomRef.current.interact(request);
+      closeInteractionSelector();
+    },
+    [closeInteractionSelector, connectionState],
+  );
+
+  const handleInteractionTrigger = useCallback(() => {
+    if (
+      connectionState !== "connected" ||
+      pendingInteractionRef.current ||
+      availableInteractionOptions.length === 0
+    ) {
+      return;
+    }
+
+    if (availableInteractionOptions.length === 1) {
+      const option = availableInteractionOptions[0];
+      if (option) {
+        submitInteraction(option);
+      }
+      return;
+    }
+
+    const firstOption = availableInteractionOptions[0];
+    interactionSelectorOpenRef.current = true;
+    setInteractionSelectorOpen(true);
+    setSelectedInteractionKey(firstOption?.key ?? null);
+    movementBindingRef.current?.stop();
+  }, [availableInteractionOptions, connectionState, submitInteraction]);
+
+  useEffect(() => {
+    const handleInteractionKey = (event: KeyboardEvent) => {
+      if (event.repeat || isEditableTarget(event.target)) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+
+      if (!interactionSelectorOpen) {
+        if (key === "e") {
+          event.preventDefault();
+          handleInteractionTrigger();
+        }
+        return;
+      }
+
+      if (key === "escape") {
+        event.preventDefault();
+        closeInteractionSelector();
+        return;
+      }
+
+      if (key === "arrowdown" || key === "s" || key === "arrowup" || key === "w") {
+        event.preventDefault();
+        setSelectedInteractionKey((currentKey) =>
+          moveInteractionSelection(
+            interactionOptions,
+            currentKey,
+            key === "arrowdown" || key === "s" ? 1 : -1,
+          ),
+        );
+        return;
+      }
+
+      if ((key === "e" || key === "enter") && selectedInteraction?.available) {
+        event.preventDefault();
+        submitInteraction(selectedInteraction);
+      }
     };
 
     window.addEventListener("keydown", handleInteractionKey);
     return () => window.removeEventListener("keydown", handleInteractionKey);
-  }, [canEnterFocus, connectionState, focusMode, handleFocusToggle]);
+  }, [
+    closeInteractionSelector,
+    handleInteractionTrigger,
+    interactionOptions,
+    interactionSelectorOpen,
+    selectedInteraction,
+    submitInteraction,
+  ]);
 
   useEffect(() => {
-    if (!focusAnnouncement) {
+    if (!interactionSelectorOpen) {
       return;
     }
 
-    const timer = window.setTimeout(() => setFocusAnnouncement(""), 3_500);
+    if (availableInteractionOptions.length === 0) {
+      closeInteractionSelector();
+      return;
+    }
+
+    if (!selectedInteraction?.available) {
+      setSelectedInteractionKey(availableInteractionOptions[0]?.key ?? null);
+    }
+  }, [
+    availableInteractionOptions,
+    closeInteractionSelector,
+    interactionSelectorOpen,
+    selectedInteraction?.available,
+  ]);
+
+  useEffect(() => {
+    if (!interactionSelectorOpen) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const buttons =
+        interactionSelectorRef.current?.querySelectorAll<HTMLButtonElement>(
+          "[data-interaction-key]",
+        );
+      [...(buttons ?? [])]
+        .find((button) => button.dataset.interactionKey === selectedInteractionKey)
+        ?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [interactionSelectorOpen, selectedInteractionKey]);
+
+  useEffect(() => {
+    if (!interactionAnnouncement) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setInteractionAnnouncement(""), 3_500);
     return () => window.clearTimeout(timer);
-  }, [focusAnnouncement]);
+  }, [interactionAnnouncement]);
+
+  useEffect(() => {
+    if (!pendingInteraction) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      if (pendingInteractionRef.current?.requestId !== pendingInteraction.requestId) {
+        return;
+      }
+
+      pendingInteractionRef.current = null;
+      setPendingInteraction(null);
+      setInteractionAnnouncement("O servidor não respondeu. Tente novamente.");
+    }, 4_000);
+    return () => window.clearTimeout(timer);
+  }, [pendingInteraction]);
 
   return (
     <main className="campus-shell">
@@ -399,7 +592,7 @@ export function CampusApp() {
       </header>
 
       <section className="campus-workspace">
-        <div aria-label={getMapDescription(self, proximity)} className="map-frame" role="img">
+        <section aria-label={getMapDescription(self, proximity)} className="map-frame">
           <div ref={gameHostRef} className="game-host" />
           {overviewEnabled ? (
             <div className="map-mode-indicator">
@@ -407,13 +600,72 @@ export function CampusApp() {
               Campus completo · movimento ativo
             </div>
           ) : null}
-          {focusMode || canEnterFocus ? (
-            <div className="desk-interaction-prompt">
+          {primaryInteraction?.available ? (
+            <div className="interaction-prompt">
               <kbd>E</kbd>
-              <span>{focusMode ? "Sair do foco" : `Sentar em ${nearbyFocusDesk?.label}`}</span>
+              <span>
+                {availableInteractionOptions.length > 1
+                  ? `Escolher interação · ${availableInteractionOptions.length} opções`
+                  : `${primaryInteraction.actionLabel} · ${primaryInteraction.label}`}
+              </span>
             </div>
           ) : null}
-        </div>
+
+          {interactionSelectorOpen ? (
+            <div
+              aria-label="Escolher interação próxima"
+              aria-modal="false"
+              className="interaction-selector"
+              ref={interactionSelectorRef}
+              role="dialog"
+            >
+              <div className="interaction-selector__header">
+                <div>
+                  <span>Ações por perto</span>
+                  <strong>O que você quer fazer?</strong>
+                </div>
+                <button
+                  aria-label="Fechar seletor de interação"
+                  className="interaction-selector__close"
+                  onClick={closeInteractionSelector}
+                  type="button"
+                >
+                  Esc
+                </button>
+              </div>
+
+              <div className="interaction-selector__options">
+                {interactionOptions.map((option) => {
+                  const selected = option.key === selectedInteraction?.key;
+                  return (
+                    <button
+                      className={`interaction-option${selected ? " interaction-option--selected" : ""}`}
+                      data-interaction-key={option.key}
+                      data-selected={selected}
+                      disabled={!option.available || Boolean(pendingInteraction)}
+                      key={option.key}
+                      onClick={() => submitInteraction(option)}
+                      onFocus={() => setSelectedInteractionKey(option.key)}
+                      onMouseEnter={() => setSelectedInteractionKey(option.key)}
+                      type="button"
+                    >
+                      <span className="interaction-option__marker">
+                        <ChevronRight aria-hidden="true" size={16} />
+                      </span>
+                      <span>
+                        <strong>{option.label}</strong>
+                        <small>{option.unavailableMessage ?? option.actionLabel}</small>
+                      </span>
+                      <em>{Math.max(1, Math.round(option.distance / 32))} m</em>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <p>W/S navegar · E confirmar · Esc fechar</p>
+            </div>
+          ) : null}
+        </section>
 
         <p className="sr-only" aria-live="polite">
           {overviewEnabled
@@ -513,34 +765,43 @@ export function CampusApp() {
             </div>
           </section>
 
-          <section className={`focus-desk-card${focusMode ? " focus-desk-card--active" : ""}`}>
+          <section
+            className={`focus-desk-card${interactionPanel.active ? " focus-desk-card--active" : ""}`}
+          >
             <Focus aria-hidden="true" size={18} />
             <div>
-              <h2 className="section-kicker">Estação de foco</h2>
-              <strong>
-                {activeFocusDesk?.label ?? nearbyFocusDesk?.label ?? "Nenhuma mesa próxima"}
-              </strong>
-              <span>
-                {getFocusDeskHelp(focusMode, nearbyFocusDesk?.label, nearbyDeskOccupant?.name)}
-              </span>
+              <h2 className="section-kicker">Interação contextual</h2>
+              <strong>{interactionPanel.label}</strong>
+              <span>{interactionPanel.help}</span>
             </div>
             <button
-              aria-pressed={focusMode}
-              className={`focus-button${focusMode ? " focus-button--active" : ""}`}
+              aria-pressed={interactionPanel.active}
+              className={`focus-button${interactionPanel.active ? " focus-button--active" : ""}`}
               disabled={
-                !selfSessionId || connectionState !== "connected" || (!focusMode && !canEnterFocus)
+                !selfSessionId ||
+                connectionState !== "connected" ||
+                availableInteractionOptions.length === 0 ||
+                Boolean(pendingInteraction)
               }
-              onClick={handleFocusToggle}
+              onClick={handleInteractionTrigger}
               type="button"
             >
-              <span>{focusMode ? "Sair" : "Sentar"}</span>
+              <span>
+                {pendingInteraction
+                  ? "Aguarde"
+                  : availableInteractionOptions.length > 1
+                    ? "Escolher"
+                    : interactionPanel.active
+                      ? "Sair"
+                      : "Interagir"}
+              </span>
               <kbd>E</kbd>
             </button>
           </section>
 
-          {focusAnnouncement ? (
+          {interactionAnnouncement ? (
             <p className="focus-feedback" aria-live="polite">
-              {focusAnnouncement}
+              {interactionAnnouncement}
             </p>
           ) : null}
 
@@ -696,37 +957,23 @@ function proximityAudioLabel(status: Parameters<typeof canToggleMicrophone>[0]):
   return "O áudio combina ambiente e distância.";
 }
 
-function getFocusDeskHelp(
-  focusMode: boolean,
-  nearbyDeskLabel?: string,
-  occupantName?: string,
-): string {
-  if (focusMode) {
-    return "Deep Work ativo · áudio e aproximação protegidos.";
+function moveInteractionSelection(
+  options: readonly InteractionOption[],
+  currentKey: string | null,
+  direction: -1 | 1,
+): string | null {
+  const availableOptions = options.filter((option) => option.available);
+
+  if (availableOptions.length === 0) {
+    return null;
   }
 
-  if (occupantName) {
-    return `${nearbyDeskLabel ?? "Esta mesa"} está ocupada por ${occupantName}.`;
-  }
-
-  if (nearbyDeskLabel) {
-    return "Pressione E ou use o botão para sentar.";
-  }
-
-  return "Aproxime-se de uma estação do Desenvolvimento.";
-}
-
-function getFocusResultMessage(result: FocusInteractionResult): string {
-  switch (result.outcome) {
-    case "activated":
-      return `Foco ativado em ${result.deskLabel}.`;
-    case "released":
-      return result.deskLabel ? `Você saiu de ${result.deskLabel}.` : "Foco encerrado.";
-    case "occupied":
-      return `${result.deskLabel} acabou de ser ocupada.`;
-    case "too_far":
-      return "Aproxime-se de uma estação de foco para sentar.";
-  }
+  const currentIndex = availableOptions.findIndex((option) => option.key === currentKey);
+  const nextIndex =
+    currentIndex < 0
+      ? 0
+      : (currentIndex + direction + availableOptions.length) % availableOptions.length;
+  return availableOptions[nextIndex]?.key ?? null;
 }
 
 function getCampusScene(game: Phaser.Game | null): CampusScene | null {

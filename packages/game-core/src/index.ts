@@ -2,6 +2,7 @@ import type {
   AcousticEnvironmentSnapshot,
   AcousticSnapshot,
   Direction,
+  InteractionActionId,
   MovementInput,
   PlayerSnapshot,
   ProximityBand,
@@ -9,10 +10,9 @@ import type {
 } from "@ig-campus/contracts";
 import { COMMONS_ACOUSTIC_ENVIRONMENT } from "@ig-campus/contracts";
 import {
-  FOCUS_DESKS,
-  type FocusDeskDefinition,
   getPlayerCollider,
   getZoneAtPosition,
+  INTERACTABLES,
   MAP_COLUMNS,
   MAP_HEIGHT,
   MAP_ROWS,
@@ -23,6 +23,7 @@ import {
   SPAWN_POINTS,
   TILE_SIZE,
   type Vector2,
+  type WorldInteractableDefinition,
 } from "./campusMap.js";
 
 export * from "./campusMap.js";
@@ -40,6 +41,14 @@ export type FocusBarrier = {
   x: number;
   y: number;
   radius: number;
+};
+
+export type InteractionCandidate = {
+  interactable: WorldInteractableDefinition;
+  actionId: InteractionActionId;
+  distance: number;
+  available: boolean;
+  unavailableReason: "occupied" | null;
 };
 
 export function getSpawnPoint(index: number): Vector2 {
@@ -249,23 +258,64 @@ export function getFocusBarriers(
     }));
 }
 
-export function getFocusDeskById(deskId: string | null): FocusDeskDefinition | null {
-  if (!deskId) {
+export function getWorldInteractableById(
+  interactableId: string | null,
+): WorldInteractableDefinition | null {
+  if (!interactableId) {
     return null;
   }
 
-  return FOCUS_DESKS.find((desk) => desk.id === deskId) ?? null;
+  return INTERACTABLES.find((interactable) => interactable.id === interactableId) ?? null;
 }
 
-export function getNearestFocusDesk(position: Vector2): FocusDeskDefinition | null {
-  return (
-    FOCUS_DESKS.map((desk) => ({ desk, distance: getDistance(position, desk.seatPosition) }))
-      .filter(({ desk, distance }) => distance <= desk.interactionRadius)
-      .sort(
-        (first, second) =>
-          first.distance - second.distance || first.desk.id.localeCompare(second.desk.id),
-      )[0]?.desk ?? null
-  );
+export function getInteractionCandidates(
+  player: PlayerSnapshot,
+  players: readonly PlayerSnapshot[],
+): InteractionCandidate[] {
+  if (player.focusMode && player.focusDeskId) {
+    const activeDesk = getWorldInteractableById(player.focusDeskId);
+
+    return activeDesk?.kind === "focus_desk"
+      ? [
+          {
+            interactable: activeDesk,
+            actionId: "leave_focus",
+            distance: 0,
+            available: true,
+            unavailableReason: null,
+          },
+        ]
+      : [];
+  }
+
+  return INTERACTABLES.map((interactable): InteractionCandidate | null => {
+    const distance = getDistance(player, interactable.interactionPosition);
+
+    if (distance > interactable.interactionRadius) {
+      return null;
+    }
+
+    const occupied = players.some(
+      (candidate) =>
+        candidate.sessionId !== player.sessionId && candidate.focusDeskId === interactable.id,
+    );
+
+    return {
+      interactable,
+      actionId: "enter_focus",
+      distance,
+      available: !occupied,
+      unavailableReason: occupied ? "occupied" : null,
+    };
+  })
+    .filter((candidate): candidate is InteractionCandidate => candidate !== null)
+    .sort(
+      (first, second) =>
+        Number(second.available) - Number(first.available) ||
+        second.interactable.priority - first.interactable.priority ||
+        first.distance - second.distance ||
+        first.interactable.id.localeCompare(second.interactable.id),
+    );
 }
 
 function canMoveThroughFocusBarriers(

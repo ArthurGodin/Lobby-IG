@@ -4,8 +4,7 @@ import {
   CAMPUS_MAP,
   type CampusMapLayer,
   CLOSE_PROXIMITY_RADIUS,
-  FOCUS_DESKS,
-  getNearestFocusDesk,
+  INTERACTABLES,
   MAP_HEIGHT,
   MAP_WIDTH,
   PROXIMITY_RADIUS,
@@ -67,6 +66,7 @@ export class CampusScene extends Phaser.Scene {
   private selfSessionId: string | null = null;
   private overviewEnabled = false;
   private followedSessionId: string | null = null;
+  private highlightedInteractableId: string | null = null;
 
   constructor(private readonly onReady?: (scene: CampusScene) => void) {
     super("CampusScene");
@@ -205,6 +205,14 @@ export class CampusScene extends Phaser.Scene {
 
     if (this.ready) {
       this.refreshPlayerStyles();
+    }
+  }
+
+  setHighlightedInteractableId(interactableId: string | null): void {
+    this.highlightedInteractableId = interactableId;
+
+    if (this.ready) {
+      this.drawFocusDesks();
     }
   }
 
@@ -415,15 +423,14 @@ export class CampusScene extends Phaser.Scene {
         .map((display) => display.focusDeskId)
         .filter((deskId): deskId is string => deskId !== null),
     );
-    const self = this.selfSessionId ? this.players.get(this.selfSessionId) : null;
-    const nearbyDesk =
-      self && !self.focusMode
-        ? getNearestFocusDesk({ x: self.authoritativeX, y: self.authoritativeY })
-        : null;
 
-    for (const desk of FOCUS_DESKS) {
+    for (const desk of INTERACTABLES) {
+      if (desk.kind !== "focus_desk") {
+        continue;
+      }
+
       const occupied = occupiedDeskIds.has(desk.id);
-      const nearby = nearbyDesk?.id === desk.id;
+      const nearby = this.highlightedInteractableId === desk.id;
 
       if (!occupied && !nearby) {
         continue;

@@ -2,12 +2,24 @@ import { createIdleInput, type MovementInput } from "@ig-campus/contracts";
 
 const MOVEMENT_HEARTBEAT_MS = 250;
 
-export function bindMovementKeys(onChange: (input: MovementInput) => void): () => void {
+export type MovementKeyBinding = {
+  stop: () => void;
+  dispose: () => void;
+};
+
+export function bindMovementKeys(
+  onChange: (input: MovementInput) => void,
+  isBlocked: () => boolean = () => false,
+): MovementKeyBinding {
   const pressedKeys = new Set<string>();
   let sequence = 0;
   let lastInput = createIdleInput(sequence);
 
   const emit = (force = false) => {
+    if (isBlocked()) {
+      pressedKeys.clear();
+    }
+
     const nextInput: MovementInput = {
       up: pressedKeys.has("arrowup") || pressedKeys.has("w"),
       down: pressedKeys.has("arrowdown") || pressedKeys.has("s"),
@@ -32,6 +44,13 @@ export function bindMovementKeys(onChange: (input: MovementInput) => void): () =
     }
 
     event.preventDefault();
+
+    if (isBlocked()) {
+      pressedKeys.clear();
+      emit();
+      return;
+    }
+
     pressedKeys.add(key);
     emit();
   };
@@ -58,12 +77,18 @@ export function bindMovementKeys(onChange: (input: MovementInput) => void): () =
   window.addEventListener("blur", onBlur);
   const heartbeatTimer = window.setInterval(() => emit(true), MOVEMENT_HEARTBEAT_MS);
 
-  return () => {
-    pressedKeys.clear();
-    window.clearInterval(heartbeatTimer);
-    window.removeEventListener("keydown", onKeyDown);
-    window.removeEventListener("keyup", onKeyUp);
-    window.removeEventListener("blur", onBlur);
+  return {
+    stop() {
+      pressedKeys.clear();
+      emit();
+    },
+    dispose() {
+      pressedKeys.clear();
+      window.clearInterval(heartbeatTimer);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    },
   };
 }
 

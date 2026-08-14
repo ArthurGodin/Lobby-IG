@@ -7,7 +7,7 @@
     "dev": "tsx watch src/main.ts",
     "build": "tsc --noEmit -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx --test src/protocol.test.ts src/mediaAccess.test.ts src/campusServer.test.ts"
+    "test": "tsx --test src/protocol.test.ts src/mediaAccess.test.ts src/interactionService.test.ts src/campusServer.test.ts"
   },
   "dependencies": {
     "@ig-campus/contracts": "workspace:*",

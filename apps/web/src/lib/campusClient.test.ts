@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { parseAcousticSnapshot, parseFocusInteractionResult } from "./campusClient";
+import { parseAcousticSnapshot, parseInteractionResult } from "./campusClient";
 
 const validSnapshot = {
   revision: 4,
@@ -44,23 +44,16 @@ describe("snapshot acústico recebido", () => {
   });
 });
 
-describe("resultado da interação de foco", () => {
-  test("aceita resultados coerentes e rejeita mesas ausentes", () => {
-    assert.deepEqual(
-      parseFocusInteractionResult({
-        outcome: "activated",
-        deskId: "dev-01",
-        deskLabel: "Estação 01",
-      }),
-      { outcome: "activated", deskId: "dev-01", deskLabel: "Estação 01" },
-    );
-    assert.equal(
-      parseFocusInteractionResult({ outcome: "occupied", deskId: null, deskLabel: null }),
-      null,
-    );
-    assert.deepEqual(
-      parseFocusInteractionResult({ outcome: "too_far", deskId: null, deskLabel: null }),
-      { outcome: "too_far", deskId: null, deskLabel: null },
-    );
+describe("resultado de interação recebido", () => {
+  test("aceita resultados correlacionados e rejeita identificadores inválidos", () => {
+    const result = {
+      requestId: "request-1",
+      interactableId: "dev-01",
+      actionId: "enter_focus",
+      outcome: "succeeded",
+    } as const;
+    assert.deepEqual(parseInteractionResult(result), result);
+    assert.equal(parseInteractionResult({ ...result, requestId: "<script>" }), null);
+    assert.equal(parseInteractionResult({ ...result, outcome: "unknown" }), null);
   });
 });

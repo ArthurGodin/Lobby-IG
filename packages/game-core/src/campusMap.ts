@@ -57,14 +57,26 @@ export type CampusZone = {
   rect: Rect;
 };
 
-export type FocusDeskDefinition = {
+export const WORLD_INTERACTABLE_KINDS = ["focus_desk"] as const;
+export type WorldInteractableKind = (typeof WORLD_INTERACTABLE_KINDS)[number];
+
+export type WorldInteractableBase = {
   id: string;
+  kind: WorldInteractableKind;
   label: string;
+  interactionPosition: Vector2;
+  interactionRadius: number;
+  priority: number;
+};
+
+export type FocusDeskDefinition = WorldInteractableBase & {
+  kind: "focus_desk";
   seatPosition: Vector2;
   exitPosition: Vector2;
   facing: "up" | "down" | "left" | "right";
-  interactionRadius: number;
 };
+
+export type WorldInteractableDefinition = FocusDeskDefinition;
 
 export type CampusMapDefinition = {
   id: "inforgeneses-campus";
@@ -77,7 +89,7 @@ export type CampusMapDefinition = {
     decorations: CampusMapLayer;
   };
   zones: readonly CampusZone[];
-  focusDesks: readonly FocusDeskDefinition[];
+  interactables: readonly WorldInteractableDefinition[];
   spawns: readonly Vector2[];
 };
 
@@ -121,7 +133,7 @@ export const MAP_ROWS = CAMPUS_MAP.rows;
 export const MAP_WIDTH = MAP_COLUMNS * CAMPUS_MAP.tileSize;
 export const MAP_HEIGHT = MAP_ROWS * CAMPUS_MAP.tileSize;
 export const ZONES: readonly CampusZone[] = CAMPUS_MAP.zones;
-export const FOCUS_DESKS: readonly FocusDeskDefinition[] = CAMPUS_MAP.focusDesks;
+export const INTERACTABLES: readonly WorldInteractableDefinition[] = CAMPUS_MAP.interactables;
 export const SPAWN_POINTS: readonly Vector2[] = CAMPUS_MAP.spawns;
 export const OBSTACLES: readonly Rect[] = deriveObstacles(CAMPUS_MAP);
 
@@ -247,14 +259,36 @@ export function validateCampusMap(map: CampusMapDefinition): string[] {
     }
   });
 
-  const deskIds = new Set<string>();
+  const interactableIds = new Set<string>();
 
-  for (const desk of map.focusDesks) {
-    if (!desk.id || deskIds.has(desk.id)) {
-      errors.push(`mesa de foco duplicada ou sem id: ${desk.id || "vazia"}`);
+  for (const interactable of map.interactables) {
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(interactable.id) || interactableIds.has(interactable.id)) {
+      errors.push(`objeto interativo duplicado ou com id inválido: ${interactable.id || "vazio"}`);
     }
-    deskIds.add(desk.id);
+    interactableIds.add(interactable.id);
 
+    if (
+      !WORLD_INTERACTABLE_KINDS.includes(interactable.kind) ||
+      interactable.label.trim().length === 0 ||
+      interactable.label.length > 64 ||
+      !Number.isFinite(interactable.interactionPosition.x) ||
+      !Number.isFinite(interactable.interactionPosition.y) ||
+      !isRectWithinDimensions(
+        getPlayerColliderForMap(interactable.interactionPosition, map),
+        map.columns * map.tileSize,
+        map.rows * map.tileSize,
+      ) ||
+      !Number.isFinite(interactable.interactionRadius) ||
+      interactable.interactionRadius <= 0 ||
+      interactable.interactionRadius > map.tileSize * 10 ||
+      !Number.isSafeInteger(interactable.priority) ||
+      interactable.priority < 0 ||
+      interactable.priority > 1_000
+    ) {
+      errors.push(`configuração interativa inválida: ${interactable.id}`);
+    }
+
+    const desk = interactable;
     if (
       !isRectWithinDimensions(
         getPlayerColliderForMap(desk.seatPosition, map),
@@ -267,12 +301,10 @@ export function validateCampusMap(map: CampusMapDefinition): string[] {
 
     const exitCollider = getPlayerColliderForMap(desk.exitPosition, map);
     if (
-      !Number.isFinite(desk.interactionRadius) ||
-      desk.interactionRadius <= 0 ||
       !isRectWithinDimensions(exitCollider, map.columns * map.tileSize, map.rows * map.tileSize) ||
       obstacles.some((obstacle) => rectanglesOverlap(exitCollider, obstacle))
     ) {
-      errors.push(`saída ou raio inválido para mesa: ${desk.id}`);
+      errors.push(`configuração de mesa de foco inválida: ${desk.id}`);
     }
   }
 
@@ -304,7 +336,7 @@ function createCampusMap(): CampusMapDefinition {
       createZone("biblioteca", "Biblioteca", "open", 2, 19, 19, 13),
       createZone("reitoria", "Administração / Reitoria", "private", 26, 19, 20, 13),
     ]),
-    focusDesks: Object.freeze([
+    interactables: Object.freeze([
       createFocusDesk("dev-01", "Estação 01", 29, 5),
       createFocusDesk("dev-02", "Estação 02", 32, 5),
       createFocusDesk("dev-03", "Estação 03", 39, 5),
@@ -508,11 +540,14 @@ function createFocusDesk(
 ): Readonly<FocusDeskDefinition> {
   return Object.freeze({
     id,
+    kind: "focus_desk",
     label,
+    interactionPosition: feetAtTile(computerColumn, computerRow + 1),
+    interactionRadius: TILE_SIZE * 1.75,
+    priority: 100,
     seatPosition: feetAtTile(computerColumn, computerRow + 1),
     exitPosition: feetAtTile(computerColumn + 1, computerRow + 1),
     facing: "up",
-    interactionRadius: TILE_SIZE * 1.75,
   });
 }
 
