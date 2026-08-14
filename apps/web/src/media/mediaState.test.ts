@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { canToggleMicrophone, INITIAL_MEDIA_STATE, mediaStatusLabel } from "./mediaState";
+import {
+  canStartScreenShare,
+  canToggleMicrophone,
+  INITIAL_MEDIA_STATE,
+  mediaStatusLabel,
+  screenShareStatusLabel,
+} from "./mediaState";
 
 describe("estado da interface de audio", () => {
   test("habilita o controle apenas em estados seguros", () => {
@@ -31,5 +37,12 @@ describe("estado da interface de audio", () => {
 
   test("inicia sem participantes falando", () => {
     assert.deepEqual(INITIAL_MEDIA_STATE.speakingIdentities, []);
+  });
+
+  test("libera apresentação somente quando a mídia está pronta", () => {
+    assert.equal(canStartScreenShare("microphone-off"), true);
+    assert.equal(canStartScreenShare("active"), true);
+    assert.equal(canStartScreenShare("error"), false);
+    assert.equal(screenShareStatusLabel("selecting"), "Escolhendo uma tela");
   });
 });

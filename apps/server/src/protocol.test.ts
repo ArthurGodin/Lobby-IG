@@ -4,6 +4,7 @@ import { PLAYER_COLORS, type PlayerSnapshot } from "@ig-campus/contracts";
 import {
   arePlayersAcousticallyCompatible,
   buildAcousticPolicy,
+  buildScreenShareAccessPolicy,
   CAMPUS_MAP,
   CLOSE_PROXIMITY_RADIUS,
   canStandAt,
@@ -25,6 +26,9 @@ import {
 import { parseClientMessage } from "./protocol.js";
 
 const FOCUS_DESKS = INTERACTABLES.filter((interactable) => interactable.kind === "focus_desk");
+const SCREEN_STATIONS = INTERACTABLES.filter(
+  (interactable) => interactable.kind === "screen_station",
+);
 
 describe("protocolo do campus", () => {
   test("aceita apenas um perfil com cor conhecida", () => {
@@ -157,7 +161,8 @@ describe("regras puras do mundo", () => {
     );
     assert.deepEqual(validateCampusMap(CAMPUS_MAP), []);
     assert.equal(FOCUS_DESKS.length, 12);
-    assert.equal(CAMPUS_MAP.interactables.length, 12);
+    assert.equal(SCREEN_STATIONS.length, 1);
+    assert.equal(CAMPUS_MAP.interactables.length, 13);
   });
 
   test("ordena candidatos por disponibilidade, distância e id", () => {
@@ -188,6 +193,60 @@ describe("regras puras do mundo", () => {
     const exit = getInteractionCandidates(self, [self, occupant]);
     assert.equal(exit.length, 1);
     assert.equal(exit[0]?.actionId, "leave_focus");
+  });
+
+  test("entrega uma apresentação apenas para a audiência autorizada", () => {
+    const station = SCREEN_STATIONS[0];
+    assert.ok(station);
+    if (!station) {
+      return;
+    }
+
+    const presenter = playerAt(
+      "presenter",
+      station.interactionPosition.x,
+      station.interactionPosition.y,
+    );
+    const viewer = playerAt(
+      "viewer",
+      station.interactionPosition.x + 1,
+      station.interactionPosition.y,
+    );
+    const outsider = playerAt(
+      "outsider",
+      station.interactionPosition.x + station.audienceRadius + 1,
+      station.interactionPosition.y,
+    );
+    const reservations = [{ stationId: station.id, presenterSessionId: presenter.sessionId }];
+
+    const presenterPolicy = buildScreenShareAccessPolicy(
+      presenter,
+      [presenter, viewer, outsider],
+      reservations,
+    );
+    const viewerPolicy = buildScreenShareAccessPolicy(
+      viewer,
+      [presenter, viewer, outsider],
+      reservations,
+    );
+    const outsiderPolicy = buildScreenShareAccessPolicy(
+      outsider,
+      [presenter, viewer, outsider],
+      reservations,
+    );
+
+    assert.deepEqual(presenterPolicy.audienceSessionIds, ["viewer"]);
+    assert.deepEqual(
+      viewerPolicy.presentations.map((share) => share.presenterSessionId),
+      ["presenter"],
+    );
+    assert.deepEqual(outsiderPolicy.presentations, []);
+
+    const candidate = getInteractionCandidates(viewer, [presenter, viewer], {
+      presentations: viewerPolicy.presentations,
+    }).find((item) => item.interactable.id === station.id);
+    assert.equal(candidate?.actionId, "start_screen_share");
+    assert.equal(candidate?.available, false);
   });
 
   test("rejeita mesas duplicadas e saídas bloqueadas", () => {

@@ -6,6 +6,7 @@ import type {
   JoinOptions,
   MediaAccessSnapshot,
   MovementInput,
+  ScreenShareSnapshot,
   ServerMessage,
   WorldStateSnapshot,
 } from "@ig-campus/contracts";
@@ -19,8 +20,9 @@ import {
 
 const DEFAULT_SERVER_URL = "ws://127.0.0.1:2567";
 
-export type CampusStateSnapshot = Omit<WorldStateSnapshot, "acoustic"> & {
+export type CampusStateSnapshot = Omit<WorldStateSnapshot, "acoustic" | "screenShare"> & {
   acoustic: AcousticSnapshot | null;
+  screenShare: ScreenShareSnapshot | null;
 };
 
 type StateListener = (state: CampusStateSnapshot) => void;
@@ -131,6 +133,7 @@ export async function joinCampus(
             players: message.players,
             proximity: message.proximity,
             acoustic: parseAcousticSnapshot(message.acoustic),
+            screenShare: parseScreenShareSnapshot(message.screenShare),
           });
         }
       }
@@ -292,6 +295,42 @@ export function parseAcousticSnapshot(value: unknown): AcousticSnapshot | null {
   };
 }
 
+export function parseScreenShareSnapshot(value: unknown): ScreenShareSnapshot | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const revision = value.revision;
+  const presentations = value.presentations;
+  const audienceSessionIds = value.audienceSessionIds;
+
+  if (
+    !Number.isSafeInteger(revision) ||
+    (revision as number) < 0 ||
+    !Array.isArray(presentations) ||
+    presentations.length > 1 ||
+    !Array.isArray(audienceSessionIds)
+  ) {
+    return null;
+  }
+
+  if (
+    !presentations.every(isScreenSharePresentation) ||
+    new Set(presentations.map((presentation) => presentation.stationId)).size !==
+      presentations.length ||
+    !audienceSessionIds.every(isSessionId) ||
+    new Set(audienceSessionIds).size !== audienceSessionIds.length
+  ) {
+    return null;
+  }
+
+  return {
+    revision: revision as number,
+    presentations,
+    audienceSessionIds: [...audienceSessionIds],
+  };
+}
+
 function isProximityPeer(value: unknown): value is AcousticSnapshot["audiblePeers"][number] {
   return (
     isRecord(value) &&
@@ -300,6 +339,19 @@ function isProximityPeer(value: unknown): value is AcousticSnapshot["audiblePeer
     Number.isFinite(value.distance) &&
     value.distance >= 0 &&
     (value.band === "close" || value.band === "nearby")
+  );
+}
+
+function isScreenSharePresentation(
+  value: unknown,
+): value is ScreenShareSnapshot["presentations"][number] {
+  return (
+    isRecord(value) &&
+    isInteractionIdentifier(value.stationId, MAX_INTERACTION_ID_LENGTH) &&
+    isSessionId(value.presenterSessionId) &&
+    typeof value.presenterName === "string" &&
+    value.presenterName.trim().length > 0 &&
+    value.presenterName.length <= 24
   );
 }
 

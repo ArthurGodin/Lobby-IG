@@ -1,4 +1,9 @@
-import type { PlayerSnapshot, ProximityBand, ProximitySnapshot } from "@ig-campus/contracts";
+import type {
+  PlayerSnapshot,
+  ProximityBand,
+  ProximitySnapshot,
+  ScreenShareSnapshot,
+} from "@ig-campus/contracts";
 import {
   ART_SCALE,
   CAMPUS_MAP,
@@ -58,6 +63,7 @@ export class CampusScene extends Phaser.Scene {
   private proximityGraphics: Phaser.GameObjects.Graphics | null = null;
   private focusGraphics: Phaser.GameObjects.Graphics | null = null;
   private focusDeskGraphics: Phaser.GameObjects.Graphics | null = null;
+  private screenStationGraphics: Phaser.GameObjects.Graphics | null = null;
   private ready = false;
   private pendingSnapshot: {
     players: PlayerSnapshot[];
@@ -67,6 +73,8 @@ export class CampusScene extends Phaser.Scene {
   private overviewEnabled = false;
   private followedSessionId: string | null = null;
   private highlightedInteractableId: string | null = null;
+  private screenShare: ScreenShareSnapshot | null = null;
+  private presentingSessionIds = new Set<string>();
 
   constructor(private readonly onReady?: (scene: CampusScene) => void) {
     super("CampusScene");
@@ -116,6 +124,7 @@ export class CampusScene extends Phaser.Scene {
     this.proximityGraphics = this.add.graphics().setDepth(18);
     this.focusGraphics = this.add.graphics().setDepth(17);
     this.focusDeskGraphics = this.add.graphics().setDepth(16);
+    this.screenStationGraphics = this.add.graphics().setDepth(16);
 
     this.scale.on(Phaser.Scale.Events.RESIZE, this.handleResize, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -176,6 +185,7 @@ export class CampusScene extends Phaser.Scene {
     this.drawProximityRings();
     this.drawFocusBarriers();
     this.drawFocusDesks();
+    this.drawScreenStations();
   }
 
   setSelfSessionId(sessionId: string | null): void {
@@ -213,6 +223,19 @@ export class CampusScene extends Phaser.Scene {
 
     if (this.ready) {
       this.drawFocusDesks();
+      this.drawScreenStations();
+    }
+  }
+
+  setScreenShare(screenShare: ScreenShareSnapshot | null): void {
+    this.screenShare = screenShare;
+    this.presentingSessionIds = new Set(
+      screenShare?.presentations.map((presentation) => presentation.presenterSessionId) ?? [],
+    );
+
+    if (this.ready) {
+      this.refreshPlayerStyles();
+      this.drawScreenStations();
     }
   }
 
@@ -445,6 +468,58 @@ export class CampusScene extends Phaser.Scene {
     }
   }
 
+  private drawScreenStations(): void {
+    const graphics = this.screenStationGraphics;
+    graphics?.clear();
+
+    if (!graphics) {
+      return;
+    }
+
+    for (const station of INTERACTABLES) {
+      if (station.kind !== "screen_station") {
+        continue;
+      }
+
+      const active = this.screenShare?.presentations.some(
+        (presentation) => presentation.stationId === station.id,
+      );
+      const nearby = this.highlightedInteractableId === station.id;
+
+      if (!active && !nearby) {
+        continue;
+      }
+
+      const color = active ? 0x44c5e8 : 0xc89b30;
+      graphics.fillStyle(color, active ? 0.18 : 0.1);
+      graphics.fillRoundedRect(
+        station.interactionPosition.x - 29,
+        station.interactionPosition.y - 47,
+        58,
+        38,
+        6,
+      );
+      graphics.lineStyle(3, color, active ? 0.95 : 0.8);
+      graphics.strokeRoundedRect(
+        station.interactionPosition.x - 29,
+        station.interactionPosition.y - 47,
+        58,
+        38,
+        6,
+      );
+
+      if (active) {
+        const pulse = (Math.sin(this.time.now / 180) + 1) / 2;
+        graphics.lineStyle(1, 0xe5fbff, 0.45 + pulse * 0.32);
+        graphics.strokeCircle(
+          station.interactionPosition.x,
+          station.interactionPosition.y - 27,
+          28 + pulse * 3,
+        );
+      }
+    }
+  }
+
   private refreshPlayerStyles(): void {
     for (const [sessionId, display] of this.players) {
       this.stylePlayer(display, sessionId);
@@ -453,17 +528,28 @@ export class CampusScene extends Phaser.Scene {
 
   private stylePlayer(display: PlayerDisplay, sessionId: string): void {
     const isSpeaking = this.speakingIdentities.has(sessionId);
+    const isPresenting = this.presentingSessionIds.has(sessionId);
     display.speaking = isSpeaking;
     display.speakingHalo.setVisible(isSpeaking);
     display.label
       .setBackgroundColor(
         display.focusMode
           ? "rgba(240,226,255,0.98)"
-          : isSpeaking
-            ? "rgba(218,248,229,0.96)"
-            : "rgba(247,249,243,0.9)",
+          : isPresenting
+            ? "rgba(219,247,255,0.97)"
+            : isSpeaking
+              ? "rgba(218,248,229,0.96)"
+              : "rgba(247,249,243,0.9)",
       )
-      .setColor(display.focusMode ? "#5a3d7e" : isSpeaking ? "#155f43" : "#1f2c27");
+      .setColor(
+        display.focusMode
+          ? "#5a3d7e"
+          : isPresenting
+            ? "#14536a"
+            : isSpeaking
+              ? "#155f43"
+              : "#1f2c27",
+      );
     display.label.setVisible(!this.overviewEnabled);
     display.marker.setVisible(this.overviewEnabled);
 

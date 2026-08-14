@@ -18,7 +18,7 @@ describe("acesso de midia", () => {
     });
   });
 
-  test("gera token restrito a sala e ao microfone", async () => {
+  test("gera token restrito a sala, microfone e compartilhamento de tela", async () => {
     const provider = createLiveKitMediaAccessProvider({
       serverUrl: "ws://127.0.0.1:7880",
       apiKey: TEST_API_KEY,
@@ -46,6 +46,6 @@ describe("acesso de midia", () => {
     assert.equal(grants.video?.canPublish, true);
     assert.equal(grants.video?.canPublishData, false);
     assert.equal(grants.video?.canSubscribe, true);
-    assert.deepEqual(grants.video?.canPublishSources, ["microphone"]);
+    assert.deepEqual(grants.video?.canPublishSources, ["microphone", "screen_share"]);
   });
 });

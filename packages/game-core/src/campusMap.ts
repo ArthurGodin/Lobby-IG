@@ -57,7 +57,7 @@ export type CampusZone = {
   rect: Rect;
 };
 
-export const WORLD_INTERACTABLE_KINDS = ["focus_desk"] as const;
+export const WORLD_INTERACTABLE_KINDS = ["focus_desk", "screen_station"] as const;
 export type WorldInteractableKind = (typeof WORLD_INTERACTABLE_KINDS)[number];
 
 export type WorldInteractableBase = {
@@ -76,7 +76,12 @@ export type FocusDeskDefinition = WorldInteractableBase & {
   facing: "up" | "down" | "left" | "right";
 };
 
-export type WorldInteractableDefinition = FocusDeskDefinition;
+export type ScreenStationDefinition = WorldInteractableBase & {
+  kind: "screen_station";
+  audienceRadius: number;
+};
+
+export type WorldInteractableDefinition = FocusDeskDefinition | ScreenStationDefinition;
 
 export type CampusMapDefinition = {
   id: "inforgeneses-campus";
@@ -288,23 +293,37 @@ export function validateCampusMap(map: CampusMapDefinition): string[] {
       errors.push(`configuração interativa inválida: ${interactable.id}`);
     }
 
-    const desk = interactable;
-    if (
-      !isRectWithinDimensions(
-        getPlayerColliderForMap(desk.seatPosition, map),
-        map.columns * map.tileSize,
-        map.rows * map.tileSize,
-      )
-    ) {
-      errors.push(`assento de mesa fora do mapa: ${desk.id}`);
+    if (interactable.kind === "focus_desk") {
+      if (
+        !isRectWithinDimensions(
+          getPlayerColliderForMap(interactable.seatPosition, map),
+          map.columns * map.tileSize,
+          map.rows * map.tileSize,
+        )
+      ) {
+        errors.push(`assento de mesa fora do mapa: ${interactable.id}`);
+      }
+
+      const exitCollider = getPlayerColliderForMap(interactable.exitPosition, map);
+      if (
+        !isRectWithinDimensions(
+          exitCollider,
+          map.columns * map.tileSize,
+          map.rows * map.tileSize,
+        ) ||
+        obstacles.some((obstacle) => rectanglesOverlap(exitCollider, obstacle))
+      ) {
+        errors.push(`configuração de mesa de foco inválida: ${interactable.id}`);
+      }
     }
 
-    const exitCollider = getPlayerColliderForMap(desk.exitPosition, map);
     if (
-      !isRectWithinDimensions(exitCollider, map.columns * map.tileSize, map.rows * map.tileSize) ||
-      obstacles.some((obstacle) => rectanglesOverlap(exitCollider, obstacle))
+      interactable.kind === "screen_station" &&
+      (!Number.isFinite(interactable.audienceRadius) ||
+        interactable.audienceRadius < interactable.interactionRadius ||
+        interactable.audienceRadius > map.tileSize * 12)
     ) {
-      errors.push(`configuração de mesa de foco inválida: ${desk.id}`);
+      errors.push(`configuração de estação de tela inválida: ${interactable.id}`);
     }
   }
 
@@ -337,6 +356,7 @@ function createCampusMap(): CampusMapDefinition {
       createZone("reitoria", "Administração / Reitoria", "private", 26, 19, 20, 13),
     ]),
     interactables: Object.freeze([
+      createScreenStation("patio-screen", "Telão do Pátio", 15, 5),
       createFocusDesk("dev-01", "Estação 01", 29, 5),
       createFocusDesk("dev-02", "Estação 02", 32, 5),
       createFocusDesk("dev-03", "Estação 03", 39, 5),
@@ -422,6 +442,7 @@ function paintDecorations(layer: CampusTileId[]): void {
   setTile(layer, 8, 5, "flowers");
   setTile(layer, 15, 12, "flowers");
   setTile(layer, 3, 14, "sign");
+  setTile(layer, 15, 5, "computer");
 
   for (const row of [5, 8, 11]) {
     for (const column of [29, 32, 39, 42]) {
@@ -548,6 +569,23 @@ function createFocusDesk(
     seatPosition: feetAtTile(computerColumn, computerRow + 1),
     exitPosition: feetAtTile(computerColumn + 1, computerRow + 1),
     facing: "up",
+  });
+}
+
+function createScreenStation(
+  id: string,
+  label: string,
+  computerColumn: number,
+  computerRow: number,
+): Readonly<ScreenStationDefinition> {
+  return Object.freeze({
+    id,
+    kind: "screen_station",
+    label,
+    interactionPosition: feetAtTile(computerColumn, computerRow + 1),
+    interactionRadius: TILE_SIZE * 2,
+    audienceRadius: TILE_SIZE * 5,
+    priority: 140,
   });
 }
 

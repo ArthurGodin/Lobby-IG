@@ -38,7 +38,7 @@ export function createLiveKitMediaAccessProvider(config: LiveKitMediaConfig): Me
         room: config.roomName,
         roomJoin: true,
         canPublish: true,
-        canPublishSources: [TrackSource.MICROPHONE],
+        canPublishSources: [TrackSource.MICROPHONE, TrackSource.SCREEN_SHARE],
         canPublishData: false,
         canSubscribe: true,
         canUpdateOwnMetadata: false,

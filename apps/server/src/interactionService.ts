@@ -10,6 +10,7 @@ import {
 import {
   getDistance,
   getWorldInteractableById,
+  type ScreenShareReservation,
   type WorldInteractableDefinition,
   type WorldInteractableKind,
 } from "@ig-campus/game-core";
@@ -25,6 +26,7 @@ type InteractionContext = {
   request: InteractionRequest;
   session: InteractionSession;
   sessions: readonly InteractionSession[];
+  screenShareOwnersByStationId: Map<string, string>;
 };
 
 type InteractionHandler = {
@@ -43,10 +45,13 @@ export type InteractionService = {
     sessions: readonly InteractionSession[],
   ) => InteractionResult;
   forgetSession: (sessionId: string) => void;
+  getScreenShareReservations: () => readonly ScreenShareReservation[];
+  reconcile: (sessions: readonly InteractionSession[]) => boolean;
 };
 
 export function createInteractionService(): InteractionService {
   const resultCache = new Map<string, Map<string, InteractionResult>>();
+  const screenShareOwnersByStationId = new Map<string, string>();
 
   return {
     execute(request, session, sessions) {
@@ -73,7 +78,7 @@ export function createInteractionService(): InteractionService {
       }
 
       const outcome = handler.execute(
-        { request, session, sessions },
+        { request, session, sessions, screenShareOwnersByStationId },
         interactable,
         request.actionId,
       );
@@ -81,22 +86,58 @@ export function createInteractionService(): InteractionService {
     },
     forgetSession(sessionId) {
       resultCache.delete(sessionId);
+      releaseScreenSharesForSession(screenShareOwnersByStationId, sessionId);
+    },
+    getScreenShareReservations() {
+      return [...screenShareOwnersByStationId]
+        .map(([stationId, presenterSessionId]) => ({ stationId, presenterSessionId }))
+        .sort((first, second) => first.stationId.localeCompare(second.stationId));
+    },
+    reconcile(sessions) {
+      let changed = false;
+
+      for (const [stationId, presenterSessionId] of screenShareOwnersByStationId) {
+        const station = getWorldInteractableById(stationId);
+        const presenter = sessions.find(
+          (candidate) => candidate.player.sessionId === presenterSessionId,
+        );
+
+        if (
+          station?.kind !== "screen_station" ||
+          !presenter ||
+          presenter.player.focusMode ||
+          getDistance(presenter.player, station.interactionPosition) > station.interactionRadius
+        ) {
+          screenShareOwnersByStationId.delete(stationId);
+          changed = true;
+        }
+      }
+
+      return changed;
     },
   };
 }
 
-const INTERACTION_HANDLERS = {
+const INTERACTION_HANDLERS: Record<WorldInteractableKind, InteractionHandler> = {
   focus_desk: {
     actions: ["enter_focus", "leave_focus"],
     execute: executeFocusDeskAction,
   },
-} satisfies Record<WorldInteractableKind, InteractionHandler>;
+  screen_station: {
+    actions: ["start_screen_share", "stop_screen_share"],
+    execute: executeScreenStationAction,
+  },
+};
 
 function executeFocusDeskAction(
   context: InteractionContext,
   desk: WorldInteractableDefinition,
   actionId: InteractionActionId,
 ): InteractionResult["outcome"] {
+  if (desk.kind !== "focus_desk") {
+    return "invalid_target";
+  }
+
   if (actionId === "leave_focus") {
     return leaveFocusDesk(context.session, desk);
   }
@@ -106,7 +147,7 @@ function executeFocusDeskAction(
 
 function enterFocusDesk(
   { session, sessions }: InteractionContext,
-  desk: WorldInteractableDefinition,
+  desk: Extract<WorldInteractableDefinition, { kind: "focus_desk" }>,
 ): InteractionResult["outcome"] {
   if (session.player.focusMode) {
     return session.player.focusDeskId === desk.id ? "succeeded" : "unavailable";
@@ -138,7 +179,7 @@ function enterFocusDesk(
 
 function leaveFocusDesk(
   session: InteractionSession,
-  desk: WorldInteractableDefinition,
+  desk: Extract<WorldInteractableDefinition, { kind: "focus_desk" }>,
 ): InteractionResult["outcome"] {
   if (!session.player.focusMode) {
     return "succeeded";
@@ -156,6 +197,77 @@ function leaveFocusDesk(
   session.player.facing = "down";
   session.input = createIdleInput(session.input.sequence);
   return "succeeded";
+}
+
+function executeScreenStationAction(
+  context: InteractionContext,
+  station: WorldInteractableDefinition,
+  actionId: InteractionActionId,
+): InteractionResult["outcome"] {
+  if (station.kind !== "screen_station") {
+    return "invalid_target";
+  }
+
+  if (actionId === "stop_screen_share") {
+    return stopScreenShare(context, station);
+  }
+
+  return startScreenShare(context, station);
+}
+
+function startScreenShare(
+  { session, screenShareOwnersByStationId }: InteractionContext,
+  station: Extract<WorldInteractableDefinition, { kind: "screen_station" }>,
+): InteractionResult["outcome"] {
+  if (session.player.focusMode) {
+    return "unavailable";
+  }
+
+  if (getDistance(session.player, station.interactionPosition) > station.interactionRadius) {
+    return "too_far";
+  }
+
+  const currentOwner = screenShareOwnersByStationId.get(station.id);
+
+  if (currentOwner === session.player.sessionId) {
+    return "succeeded";
+  }
+
+  if (currentOwner || screenShareOwnersByStationId.size > 0) {
+    return "conflict";
+  }
+
+  screenShareOwnersByStationId.set(station.id, session.player.sessionId);
+  return "succeeded";
+}
+
+function stopScreenShare(
+  { session, screenShareOwnersByStationId }: InteractionContext,
+  station: Extract<WorldInteractableDefinition, { kind: "screen_station" }>,
+): InteractionResult["outcome"] {
+  const currentOwner = screenShareOwnersByStationId.get(station.id);
+
+  if (!currentOwner) {
+    return "succeeded";
+  }
+
+  if (currentOwner !== session.player.sessionId) {
+    return "forbidden";
+  }
+
+  screenShareOwnersByStationId.delete(station.id);
+  return "succeeded";
+}
+
+function releaseScreenSharesForSession(
+  screenShareOwnersByStationId: Map<string, string>,
+  sessionId: string,
+): void {
+  for (const [stationId, presenterSessionId] of screenShareOwnersByStationId) {
+    if (presenterSessionId === sessionId) {
+      screenShareOwnersByStationId.delete(stationId);
+    }
+  }
 }
 
 function createResult(

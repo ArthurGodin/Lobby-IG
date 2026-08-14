@@ -54,7 +54,12 @@ export type PlayerSnapshot = {
 export const MAX_INTERACTION_ID_LENGTH = 64;
 export const MAX_INTERACTION_REQUEST_ID_LENGTH = 64;
 
-export const INTERACTION_ACTION_IDS = ["enter_focus", "leave_focus"] as const;
+export const INTERACTION_ACTION_IDS = [
+  "enter_focus",
+  "leave_focus",
+  "start_screen_share",
+  "stop_screen_share",
+] as const;
 export type InteractionActionId = (typeof INTERACTION_ACTION_IDS)[number];
 
 export const INTERACTION_OUTCOMES = [
@@ -104,6 +109,18 @@ export type AcousticSnapshot = {
   audiblePeers: ProximityPeerSnapshot[];
 };
 
+export type ScreenSharePresentationSnapshot = {
+  stationId: string;
+  presenterSessionId: string;
+  presenterName: string;
+};
+
+export type ScreenShareSnapshot = {
+  revision: number;
+  presentations: ScreenSharePresentationSnapshot[];
+  audienceSessionIds: string[];
+};
+
 export const COMMONS_ACOUSTIC_ENVIRONMENT: AcousticEnvironmentSnapshot = {
   zoneId: null,
   label: "Áreas comuns",
@@ -115,6 +132,7 @@ export type WorldStateSnapshot = {
   players: PlayerSnapshot[];
   proximity: ProximitySnapshot;
   acoustic: AcousticSnapshot;
+  screenShare: ScreenShareSnapshot;
 };
 
 export type ConnectionStatus = "connecting" | "connected" | "offline" | "error";
@@ -159,6 +177,7 @@ export type ServerMessage =
       players: PlayerSnapshot[];
       proximity: ProximitySnapshot;
       acoustic: AcousticSnapshot;
+      screenShare: ScreenShareSnapshot;
     }
   | {
       type: "error";

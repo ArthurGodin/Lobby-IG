@@ -7,6 +7,8 @@ import type {
   PlayerSnapshot,
   ProximityBand,
   ProximityPeerSnapshot,
+  ScreenSharePresentationSnapshot,
+  ScreenShareSnapshot,
 } from "@ig-campus/contracts";
 import { COMMONS_ACOUSTIC_ENVIRONMENT } from "@ig-campus/contracts";
 import {
@@ -43,12 +45,21 @@ export type FocusBarrier = {
   radius: number;
 };
 
+export type ScreenShareReservation = {
+  stationId: string;
+  presenterSessionId: string;
+};
+
 export type InteractionCandidate = {
   interactable: WorldInteractableDefinition;
   actionId: InteractionActionId;
   distance: number;
   available: boolean;
   unavailableReason: "occupied" | null;
+};
+
+const EMPTY_SCREEN_SHARE_SNAPSHOT: Pick<ScreenShareSnapshot, "presentations"> = {
+  presentations: [],
 };
 
 export function getSpawnPoint(index: number): Vector2 {
@@ -258,6 +269,68 @@ export function getFocusBarriers(
     }));
 }
 
+export function buildScreenShareAccessPolicy(
+  listener: PlayerSnapshot,
+  players: readonly PlayerSnapshot[],
+  reservations: readonly ScreenShareReservation[],
+): Omit<ScreenShareSnapshot, "revision"> {
+  const playersBySessionId = new Map(players.map((player) => [player.sessionId, player]));
+  const presentations: ScreenSharePresentationSnapshot[] = [];
+  const audienceSessionIds = new Set<string>();
+
+  for (const reservation of reservations) {
+    const station = getWorldInteractableById(reservation.stationId);
+    const presenter = playersBySessionId.get(reservation.presenterSessionId);
+
+    if (station?.kind !== "screen_station" || !presenter) {
+      continue;
+    }
+
+    if (canWatchScreenShare(listener, presenter, station)) {
+      presentations.push({
+        stationId: station.id,
+        presenterSessionId: presenter.sessionId,
+        presenterName: presenter.name,
+      });
+    }
+
+    if (presenter.sessionId === listener.sessionId) {
+      for (const candidate of players) {
+        if (
+          candidate.sessionId !== presenter.sessionId &&
+          canWatchScreenShare(candidate, presenter, station)
+        ) {
+          audienceSessionIds.add(candidate.sessionId);
+        }
+      }
+    }
+  }
+
+  return {
+    presentations: presentations.sort((first, second) =>
+      first.stationId.localeCompare(second.stationId),
+    ),
+    audienceSessionIds: [...audienceSessionIds].sort(),
+  };
+}
+
+export function canWatchScreenShare(
+  viewer: PlayerSnapshot,
+  presenter: PlayerSnapshot,
+  station: Extract<WorldInteractableDefinition, { kind: "screen_station" }>,
+): boolean {
+  if (viewer.sessionId === presenter.sessionId) {
+    return true;
+  }
+
+  return (
+    !viewer.focusMode &&
+    !presenter.focusMode &&
+    getDistance(viewer, station.interactionPosition) <= station.audienceRadius &&
+    arePlayersAcousticallyCompatible(viewer, presenter)
+  );
+}
+
 export function getWorldInteractableById(
   interactableId: string | null,
 ): WorldInteractableDefinition | null {
@@ -271,7 +344,28 @@ export function getWorldInteractableById(
 export function getInteractionCandidates(
   player: PlayerSnapshot,
   players: readonly PlayerSnapshot[],
+  screenShare: Pick<ScreenShareSnapshot, "presentations"> = EMPTY_SCREEN_SHARE_SNAPSHOT,
 ): InteractionCandidate[] {
+  const ownPresentation = screenShare.presentations.find(
+    (presentation) => presentation.presenterSessionId === player.sessionId,
+  );
+
+  if (ownPresentation) {
+    const station = getWorldInteractableById(ownPresentation.stationId);
+
+    return station?.kind === "screen_station"
+      ? [
+          {
+            interactable: station,
+            actionId: "stop_screen_share",
+            distance: getDistance(player, station.interactionPosition),
+            available: true,
+            unavailableReason: null,
+          },
+        ]
+      : [];
+  }
+
   if (player.focusMode && player.focusDeskId) {
     const activeDesk = getWorldInteractableById(player.focusDeskId);
 
@@ -288,11 +382,27 @@ export function getInteractionCandidates(
       : [];
   }
 
+  const activePresentationsByStationId = new Map(
+    screenShare.presentations.map((presentation) => [presentation.stationId, presentation]),
+  );
+
   return INTERACTABLES.map((interactable): InteractionCandidate | null => {
     const distance = getDistance(player, interactable.interactionPosition);
 
     if (distance > interactable.interactionRadius) {
       return null;
+    }
+
+    if (interactable.kind === "screen_station") {
+      const activePresentation = activePresentationsByStationId.get(interactable.id);
+
+      return {
+        interactable,
+        actionId: "start_screen_share",
+        distance,
+        available: !activePresentation,
+        unavailableReason: activePresentation ? "occupied" : null,
+      };
     }
 
     const occupied = players.some(

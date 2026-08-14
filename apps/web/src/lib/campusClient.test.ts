@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { parseAcousticSnapshot, parseInteractionResult } from "./campusClient";
+import {
+  parseAcousticSnapshot,
+  parseInteractionResult,
+  parseScreenShareSnapshot,
+} from "./campusClient";
 
 const validSnapshot = {
   revision: 4,
@@ -55,5 +59,35 @@ describe("resultado de interação recebido", () => {
     assert.deepEqual(parseInteractionResult(result), result);
     assert.equal(parseInteractionResult({ ...result, requestId: "<script>" }), null);
     assert.equal(parseInteractionResult({ ...result, outcome: "unknown" }), null);
+  });
+});
+
+describe("snapshot de compartilhamento de tela recebido", () => {
+  const validScreenShare = {
+    revision: 2,
+    presentations: [
+      {
+        stationId: "patio-screen",
+        presenterSessionId: "alpha",
+        presenterName: "Ada",
+      },
+    ],
+    audienceSessionIds: ["beta"],
+  };
+
+  test("aceita uma apresentação autoritativa e rejeita dados suspeitos", () => {
+    assert.deepEqual(parseScreenShareSnapshot(validScreenShare), validScreenShare);
+    assert.equal(parseScreenShareSnapshot({ ...validScreenShare, revision: -1 }), null);
+    assert.equal(
+      parseScreenShareSnapshot({ ...validScreenShare, audienceSessionIds: ["beta", "beta"] }),
+      null,
+    );
+    assert.equal(
+      parseScreenShareSnapshot({
+        ...validScreenShare,
+        presentations: [{ ...validScreenShare.presentations[0], stationId: "<script>" }],
+      }),
+      null,
+    );
   });
 });

@@ -1,4 +1,9 @@
-import type { AcousticSnapshot, MediaAccessSnapshot, PlayerSnapshot } from "@ig-campus/contracts";
+import type {
+  AcousticSnapshot,
+  MediaAccessSnapshot,
+  PlayerSnapshot,
+  ScreenShareSnapshot,
+} from "@ig-campus/contracts";
 import {
   MediaDeviceFailure,
   type RemoteParticipant,
@@ -11,6 +16,7 @@ import {
 import { buildAcousticMediaPlan } from "./acousticMediaPolicy";
 import type { CampusMediaState } from "./mediaState";
 import { AUDIO_UNSUBSCRIBE_DELAY_MS } from "./proximityAudioPolicy";
+import { buildScreenShareMediaPlan } from "./screenShareMediaPolicy";
 import { buildSpatialPanByIdentity, filterVisibleSpeakingIdentities } from "./spatialAudioPolicy";
 
 type StateListener = (state: CampusMediaState) => void;
@@ -25,6 +31,9 @@ type SpatialAudioGraph = {
 export class CampusMediaController {
   private room: Room | null = null;
   private allowedIdentities = new Set<string>();
+  private allowedScreenPresenterIdentities = new Set<string>();
+  private locallyHiddenScreenPresenterIdentities = new Set<string>();
+  private screenShareAudienceIdentities = new Set<string>();
   private allowedFingerprint = "[]";
   private desiredGains = new Map<string, number>();
   private desiredPans = new Map<string, number>();
@@ -35,14 +44,21 @@ export class CampusMediaController {
   private audioContext: AudioContext | null = null;
   private removeSpatialAudioUnlockListeners: (() => void) | null = null;
   private lastAcousticRevision = -1;
+  private lastScreenShareRevision = -1;
   private mediaConnected = false;
   private privacyFailed = false;
   private generation = 0;
   private disconnecting = false;
+  private localScreenShareStationId: string | null = null;
+  private stoppingLocalScreenShare = false;
+  private screenTracksByPresenterIdentity = new Map<string, RemoteTrack>();
   private state: CampusMediaState = {
     status: "unavailable",
     playbackBlocked: false,
     speakingIdentities: [],
+    screenShareStatus: "idle",
+    screenShareStoppedStationId: null,
+    screenShareTrackVersion: 0,
   };
 
   constructor(
@@ -176,6 +192,166 @@ export class CampusMediaController {
     this.applyAcousticsToAllParticipants();
   }
 
+  syncScreenShare(snapshot: ScreenShareSnapshot | null): void {
+    const plan = buildScreenShareMediaPlan(
+      snapshot,
+      this.lastScreenShareRevision,
+      this.allowedScreenPresenterIdentities,
+    );
+
+    if (!plan) {
+      return;
+    }
+
+    if (plan.revision !== null) {
+      this.lastScreenShareRevision = plan.revision;
+    }
+
+    this.allowedScreenPresenterIdentities = new Set(plan.allowedPresenterIdentities);
+    this.screenShareAudienceIdentities = new Set(plan.audienceIdentities);
+
+    for (const identity of this.locallyHiddenScreenPresenterIdentities) {
+      if (!this.allowedScreenPresenterIdentities.has(identity)) {
+        this.locallyHiddenScreenPresenterIdentities.delete(identity);
+      }
+    }
+
+    const room = this.room;
+    const localIdentity = room?.localParticipant.identity;
+    const stillOwnsPresentation = Boolean(
+      localIdentity &&
+        snapshot?.presentations.some(
+          (presentation) => presentation.presenterSessionId === localIdentity,
+        ),
+    );
+
+    if (this.localScreenShareStationId && !stillOwnsPresentation) {
+      void this.stopLocalScreenShare(false);
+    }
+
+    if (!room || !this.mediaConnected) {
+      return;
+    }
+
+    if (!this.applyPublisherPermissions(room)) {
+      return;
+    }
+
+    for (const identity of plan.immediatelyBlockedPresenterIdentities) {
+      const participant = room.remoteParticipants.get(identity);
+
+      if (participant) {
+        this.unsubscribeScreenShareImmediately(participant);
+      }
+    }
+
+    this.applyAcousticsToAllParticipants();
+  }
+
+  async startScreenShare(stationId: string): Promise<void> {
+    const room = this.room;
+
+    if (!room || !this.mediaConnected || this.localScreenShareStationId) {
+      this.setState({ screenShareStatus: "error", screenShareStoppedStationId: stationId });
+      return;
+    }
+
+    this.localScreenShareStationId = stationId;
+    this.setState({ screenShareStatus: "selecting", screenShareStoppedStationId: null });
+
+    try {
+      if (!this.applyPublisherPermissions(room)) {
+        return;
+      }
+
+      const publication = await room.localParticipant.setScreenShareEnabled(
+        true,
+        {
+          audio: false,
+          resolution: { width: 1280, height: 720, frameRate: 15 },
+          selfBrowserSurface: "include",
+          surfaceSwitching: "include",
+        },
+        { simulcast: true },
+      );
+
+      if (!publication) {
+        throw new Error("A tela não foi publicada.");
+      }
+
+      if (this.localScreenShareStationId !== stationId || this.room !== room) {
+        await room.localParticipant.setScreenShareEnabled(false);
+        return;
+      }
+
+      if (!this.applyPublisherPermissions(room)) {
+        return;
+      }
+
+      this.setState({ screenShareStatus: "active", screenShareStoppedStationId: null });
+    } catch (error) {
+      const failure = MediaDeviceFailure.getFailure(error);
+      this.localScreenShareStationId = null;
+      this.stoppingLocalScreenShare = true;
+      await room.localParticipant.setScreenShareEnabled(false).catch(() => undefined);
+      this.stoppingLocalScreenShare = false;
+      this.setState({
+        screenShareStatus:
+          failure === MediaDeviceFailure.PermissionDenied ? "permission-denied" : "error",
+        screenShareStoppedStationId: stationId,
+      });
+    }
+  }
+
+  async stopScreenShare(): Promise<void> {
+    await this.stopLocalScreenShare(false);
+  }
+
+  attachScreenShareVideo(
+    presenterIdentity: string,
+    element: HTMLVideoElement,
+  ): (() => void) | undefined {
+    const track = this.screenTracksByPresenterIdentity.get(presenterIdentity);
+
+    if (!track) {
+      return;
+    }
+
+    element.autoplay = true;
+    element.playsInline = true;
+    track.attach(element);
+
+    return () => {
+      track.detach(element);
+    };
+  }
+
+  setScreenShareViewing(presenterIdentity: string, viewing: boolean): void {
+    if (viewing) {
+      this.locallyHiddenScreenPresenterIdentities.delete(presenterIdentity);
+    } else {
+      this.locallyHiddenScreenPresenterIdentities.add(presenterIdentity);
+    }
+
+    const participant = this.room?.remoteParticipants.get(presenterIdentity);
+
+    if (!participant) {
+      return;
+    }
+
+    if (viewing) {
+      this.applyAcoustics(participant);
+    } else {
+      this.unsubscribeScreenShareImmediately(participant);
+    }
+  }
+
+  acknowledgeScreenShareStopped(): void {
+    if (this.state.screenShareStoppedStationId) {
+      this.setState({ screenShareStoppedStationId: null });
+    }
+  }
+
   syncSpatialPositions(selfSessionId: string | null, players: readonly PlayerSnapshot[]): void {
     this.desiredPans = buildSpatialPanByIdentity(selfSessionId, players);
     this.applySpatialAudioParameters();
@@ -274,15 +450,20 @@ export class CampusMediaController {
     this.disconnecting = true;
     this.clearUnsubscribeTimers();
     this.allowedIdentities.clear();
+    this.allowedScreenPresenterIdentities.clear();
+    this.locallyHiddenScreenPresenterIdentities.clear();
+    this.screenShareAudienceIdentities.clear();
     this.allowedFingerprint = "[]";
     this.desiredGains.clear();
     this.desiredPans.clear();
     this.detectedSpeakingIdentities.clear();
     this.lastAcousticRevision = -1;
+    this.lastScreenShareRevision = -1;
     this.mediaConnected = false;
     this.privacyFailed = false;
+    await this.stopLocalScreenShare(false);
     await this.resetSpatialAudio();
-    this.removeAudioElements();
+    this.removeMediaElements();
     const room = this.room;
     this.room = null;
 
@@ -296,6 +477,9 @@ export class CampusMediaController {
       status: "unavailable",
       playbackBlocked: false,
       speakingIdentities: [],
+      screenShareStatus: "idle",
+      screenShareStoppedStationId: null,
+      screenShareTrackVersion: 0,
     });
   }
 
@@ -306,6 +490,16 @@ export class CampusMediaController {
       })
       .on(RoomEvent.TrackPublished, (_publication, participant) => {
         this.applyAcoustics(participant);
+      })
+      .on(RoomEvent.LocalTrackPublished, () => {
+        this.applyPublisherPermissions(room);
+      })
+      .on(RoomEvent.LocalTrackUnpublished, (publication) => {
+        this.applyPublisherPermissions(room);
+
+        if (publication.source === Track.Source.ScreenShare) {
+          this.handleLocalScreenShareEnded();
+        }
       })
       .on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
         this.handleTrackSubscribed(track, publication, participant);
@@ -324,6 +518,7 @@ export class CampusMediaController {
         this.desiredGains.delete(participant.identity);
         this.desiredPans.delete(participant.identity);
         this.detectedSpeakingIdentities.delete(participant.identity);
+        this.removeScreenTrackForPresenter(participant.identity);
         this.refreshSpeakingState(room);
       })
       .on(RoomEvent.AudioPlaybackStatusChanged, () => {
@@ -374,26 +569,37 @@ export class CampusMediaController {
   private applyAcoustics(participant: RemoteParticipant): void {
     if (!this.allowedIdentities.has(participant.identity)) {
       this.unsubscribeImmediately(participant);
-      return;
+    } else {
+      const gain = this.desiredGains.get(participant.identity) ?? 0;
+      participant.setVolume(
+        this.hasSpatialGraphForIdentity(participant.identity) ? 1 : gain,
+        Track.Source.Microphone,
+      );
+
+      for (const publication of participant.audioTrackPublications.values()) {
+        if (publication.source !== Track.Source.Microphone) {
+          publication.setSubscribed(false);
+          continue;
+        }
+
+        if (gain > 0) {
+          this.clearUnsubscribeTimer(participant.identity);
+          publication.setSubscribed(true);
+        } else if (publication.isSubscribed || publication.isDesired) {
+          this.scheduleUnsubscribe(participant);
+        }
+      }
     }
 
-    const gain = this.desiredGains.get(participant.identity) ?? 0;
-    participant.setVolume(
-      this.hasSpatialGraphForIdentity(participant.identity) ? 1 : gain,
-      Track.Source.Microphone,
-    );
-
-    for (const publication of participant.audioTrackPublications.values()) {
-      if (publication.source !== Track.Source.Microphone) {
-        publication.setSubscribed(false);
-        continue;
-      }
-
-      if (gain > 0) {
-        this.clearUnsubscribeTimer(participant.identity);
+    for (const publication of participant.videoTrackPublications.values()) {
+      if (
+        publication.source === Track.Source.ScreenShare &&
+        this.allowedScreenPresenterIdentities.has(participant.identity) &&
+        !this.locallyHiddenScreenPresenterIdentities.has(participant.identity)
+      ) {
         publication.setSubscribed(true);
-      } else if (publication.isSubscribed || publication.isDesired) {
-        this.scheduleUnsubscribe(participant);
+      } else {
+        publication.setSubscribed(false);
       }
     }
   }
@@ -404,25 +610,36 @@ export class CampusMediaController {
     participant: RemoteParticipant,
   ): void {
     if (
-      track.kind !== Track.Kind.Audio ||
-      publication.source !== Track.Source.Microphone ||
-      !this.allowedIdentities.has(participant.identity)
+      track.kind === Track.Kind.Audio &&
+      publication.source === Track.Source.Microphone &&
+      this.allowedIdentities.has(participant.identity)
     ) {
-      publication.setSubscribed(false);
+      const element = track.attach();
+      element.autoplay = true;
+      element.dataset.campusMediaParticipant = participant.identity;
+      element.className = "campus-remote-audio";
+      this.getAudioRoot()?.append(element);
+      this.trackElements.set(track, element);
+      this.routeTrackThroughSpatialAudio(track, element, participant.identity);
+      participant.setVolume(
+        this.spatialAudioGraphs.has(track) ? 1 : (this.desiredGains.get(participant.identity) ?? 0),
+        Track.Source.Microphone,
+      );
       return;
     }
 
-    const element = track.attach();
-    element.autoplay = true;
-    element.dataset.campusMediaParticipant = participant.identity;
-    element.className = "campus-remote-audio";
-    this.getAudioRoot()?.append(element);
-    this.trackElements.set(track, element);
-    this.routeTrackThroughSpatialAudio(track, element, participant.identity);
-    participant.setVolume(
-      this.spatialAudioGraphs.has(track) ? 1 : (this.desiredGains.get(participant.identity) ?? 0),
-      Track.Source.Microphone,
-    );
+    if (
+      track.kind === Track.Kind.Video &&
+      publication.source === Track.Source.ScreenShare &&
+      this.allowedScreenPresenterIdentities.has(participant.identity) &&
+      !this.locallyHiddenScreenPresenterIdentities.has(participant.identity)
+    ) {
+      this.screenTracksByPresenterIdentity.set(participant.identity, track);
+      this.bumpScreenShareTrackVersion();
+      return;
+    }
+
+    publication.setSubscribed(false);
   }
 
   private scheduleUnsubscribe(participant: RemoteParticipant): void {
@@ -461,14 +678,46 @@ export class CampusMediaController {
     }
   }
 
+  private unsubscribeScreenShareImmediately(participant: RemoteParticipant): void {
+    for (const publication of participant.videoTrackPublications.values()) {
+      if (publication.source === Track.Source.ScreenShare) {
+        publication.setSubscribed(false);
+      }
+    }
+
+    this.removeScreenTrackForPresenter(participant.identity);
+  }
+
   private applyPublisherPermissions(room: Room): boolean {
     try {
+      const allowedTracksByParticipant = new Map<string, Set<string>>();
+      const microphoneTrackSid = room.localParticipant.getTrackPublication(
+        Track.Source.Microphone,
+      )?.trackSid;
+      const screenShareTrackSid = room.localParticipant.getTrackPublication(
+        Track.Source.ScreenShare,
+      )?.trackSid;
+
+      if (microphoneTrackSid) {
+        for (const participantIdentity of this.allowedIdentities) {
+          addAllowedTrack(allowedTracksByParticipant, participantIdentity, microphoneTrackSid);
+        }
+      }
+
+      if (screenShareTrackSid) {
+        for (const participantIdentity of this.screenShareAudienceIdentities) {
+          addAllowedTrack(allowedTracksByParticipant, participantIdentity, screenShareTrackSid);
+        }
+      }
+
       room.localParticipant.setTrackSubscriptionPermissions(
         false,
-        [...this.allowedIdentities].sort().map((participantIdentity) => ({
-          participantIdentity,
-          allowAll: true,
-        })),
+        [...allowedTracksByParticipant]
+          .sort(([first], [second]) => first.localeCompare(second))
+          .map(([participantIdentity, allowedTrackSids]) => ({
+            participantIdentity,
+            allowedTrackSids: [...allowedTrackSids].sort(),
+          })),
       );
       return true;
     } catch (error) {
@@ -481,6 +730,9 @@ export class CampusMediaController {
   private enterPrivacyFailure(room: Room, disconnectMedia = false): void {
     this.privacyFailed = true;
     this.allowedIdentities.clear();
+    this.allowedScreenPresenterIdentities.clear();
+    this.locallyHiddenScreenPresenterIdentities.clear();
+    this.screenShareAudienceIdentities.clear();
     this.allowedFingerprint = "[]";
     this.desiredGains.clear();
     this.detectedSpeakingIdentities.clear();
@@ -495,7 +747,10 @@ export class CampusMediaController {
 
     for (const participant of room.remoteParticipants.values()) {
       this.unsubscribeImmediately(participant);
+      this.unsubscribeScreenShareImmediately(participant);
     }
+
+    void this.stopLocalScreenShare(true);
 
     if (room.localParticipant.isMicrophoneEnabled) {
       void room.localParticipant.setMicrophoneEnabled(false).catch((error) => {
@@ -514,7 +769,7 @@ export class CampusMediaController {
       this.room = null;
       room.removeAllListeners();
       void this.resetSpatialAudio();
-      this.removeAudioElements();
+      this.removeMediaElements();
       void room.disconnect();
     }
   }
@@ -538,20 +793,88 @@ export class CampusMediaController {
 
   private detachTrack(track: RemoteTrack): void {
     this.disconnectSpatialGraph(track);
+    const audioElement = this.trackElements.get(track);
     this.trackElements.delete(track);
 
-    for (const element of track.detach()) {
-      element.remove();
+    if (audioElement) {
+      for (const element of track.detach()) {
+        element.remove();
+      }
+      return;
     }
+
+    for (const [identity, screenTrack] of this.screenTracksByPresenterIdentity) {
+      if (screenTrack === track) {
+        this.screenTracksByPresenterIdentity.delete(identity);
+        this.bumpScreenShareTrackVersion();
+        break;
+      }
+    }
+
+    track.detach();
   }
 
-  private removeAudioElements(): void {
+  private removeMediaElements(): void {
     for (const track of this.spatialAudioGraphs.keys()) {
       this.disconnectSpatialGraph(track);
     }
 
     this.trackElements.clear();
+    for (const track of this.screenTracksByPresenterIdentity.values()) {
+      track.detach();
+    }
+    this.screenTracksByPresenterIdentity.clear();
     this.getAudioRoot()?.replaceChildren();
+  }
+
+  private removeScreenTrackForPresenter(identity: string): void {
+    const track = this.screenTracksByPresenterIdentity.get(identity);
+
+    if (!track) {
+      return;
+    }
+
+    this.screenTracksByPresenterIdentity.delete(identity);
+    track.detach();
+    this.bumpScreenShareTrackVersion();
+  }
+
+  private bumpScreenShareTrackVersion(): void {
+    this.setState({ screenShareTrackVersion: this.state.screenShareTrackVersion + 1 });
+  }
+
+  private async stopLocalScreenShare(announceStop: boolean): Promise<void> {
+    const room = this.room;
+    const stationId = this.localScreenShareStationId;
+    this.localScreenShareStationId = null;
+
+    if (!room?.localParticipant.isScreenShareEnabled) {
+      if (stationId) {
+        this.setState({
+          screenShareStatus: "idle",
+          screenShareStoppedStationId: announceStop ? stationId : null,
+        });
+      }
+      return;
+    }
+
+    this.stoppingLocalScreenShare = true;
+    await room.localParticipant.setScreenShareEnabled(false).catch(() => undefined);
+    this.stoppingLocalScreenShare = false;
+    this.setState({
+      screenShareStatus: "idle",
+      screenShareStoppedStationId: announceStop ? stationId : null,
+    });
+  }
+
+  private handleLocalScreenShareEnded(): void {
+    const stationId = this.localScreenShareStationId;
+    this.localScreenShareStationId = null;
+
+    this.setState({
+      screenShareStatus: "idle",
+      screenShareStoppedStationId: this.stoppingLocalScreenShare ? null : stationId,
+    });
   }
 
   private refreshSpeakingState(room: Room): void {
@@ -755,6 +1078,9 @@ export class CampusMediaController {
     if (
       nextState.status === this.state.status &&
       nextState.playbackBlocked === this.state.playbackBlocked &&
+      nextState.screenShareStatus === this.state.screenShareStatus &&
+      nextState.screenShareStoppedStationId === this.state.screenShareStoppedStationId &&
+      nextState.screenShareTrackVersion === this.state.screenShareTrackVersion &&
       speakingUnchanged
     ) {
       return;
@@ -763,4 +1089,14 @@ export class CampusMediaController {
     this.state = nextState;
     this.onStateChange(nextState);
   }
+}
+
+function addAllowedTrack(
+  allowedTracksByParticipant: Map<string, Set<string>>,
+  participantIdentity: string,
+  trackSid: string,
+): void {
+  const allowedTrackSids = allowedTracksByParticipant.get(participantIdentity) ?? new Set<string>();
+  allowedTrackSids.add(trackSid);
+  allowedTracksByParticipant.set(participantIdentity, allowedTrackSids);
 }

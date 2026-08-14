@@ -10,6 +10,9 @@ import { INTERACTABLES, SPAWN_POINTS } from "@ig-campus/game-core";
 import { createInteractionService, type InteractionSession } from "./interactionService.js";
 
 const FOCUS_DESKS = INTERACTABLES.filter((interactable) => interactable.kind === "focus_desk");
+const SCREEN_STATIONS = INTERACTABLES.filter(
+  (interactable) => interactable.kind === "screen_station",
+);
 
 describe("serviço de interações", () => {
   test("entra, deduplica e sai de uma mesa de foco", () => {
@@ -76,6 +79,42 @@ describe("serviço de interações", () => {
         .outcome,
       "conflict",
     );
+  });
+
+  test("reserva uma estação de tela, impede disputa e libera ao sair", () => {
+    const station = SCREEN_STATIONS[0];
+    assert.ok(station);
+    if (!station) {
+      return;
+    }
+
+    const service = createInteractionService();
+    const alpha = sessionAt("alpha", station.interactionPosition.x, station.interactionPosition.y);
+    const beta = sessionAt("beta", station.interactionPosition.x, station.interactionPosition.y);
+    const start = request("screen-start", station.id, "start_screen_share");
+
+    assert.equal(service.execute(start, alpha, [alpha, beta]).outcome, "succeeded");
+    assert.deepEqual(service.getScreenShareReservations(), [
+      { stationId: station.id, presenterSessionId: "alpha" },
+    ]);
+    assert.equal(
+      service.execute(request("screen-conflict", station.id, "start_screen_share"), beta, [
+        alpha,
+        beta,
+      ]).outcome,
+      "conflict",
+    );
+    assert.equal(
+      service.execute(request("screen-stop-beta", station.id, "stop_screen_share"), beta, [
+        alpha,
+        beta,
+      ]).outcome,
+      "forbidden",
+    );
+
+    alpha.player.x += station.interactionRadius + 1;
+    assert.equal(service.reconcile([alpha, beta]), true);
+    assert.deepEqual(service.getScreenShareReservations(), []);
   });
 });
 

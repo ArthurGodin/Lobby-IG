@@ -5,6 +5,7 @@ import type {
   PlayerSnapshot,
   ProximityPeerSnapshot,
   ProximitySnapshot,
+  ScreenShareSnapshot,
 } from "@ig-campus/contracts";
 import { isPlayerColor, pickPlayerColor, sanitizeDisplayName } from "@ig-campus/contracts";
 import { PROXIMITY_RADIUS } from "@ig-campus/game-core";
@@ -18,6 +19,7 @@ import {
   Map as MapIcon,
   Mic,
   MicOff,
+  MonitorUp,
   RadioTower,
   RefreshCw,
   UsersRound,
@@ -32,11 +34,12 @@ import {
   buildInteractionOptions,
   buildInteractionPanelContent,
   createInteractionRequest,
+  createInteractionRequestForAction,
   getInteractionResultMessage,
   type InteractionOption,
 } from "../interactions/interactionState";
 import { getCampusServerUrl, joinCampus, sendMovement } from "../lib/campusClient";
-import { canToggleMicrophone, mediaStatusLabel } from "../media/mediaState";
+import { canStartScreenShare, canToggleMicrophone, mediaStatusLabel } from "../media/mediaState";
 import { useCampusMedia } from "./useCampusMedia";
 
 type ConnectionState = "connecting" | "connected" | "offline" | "error";
@@ -60,11 +63,14 @@ export function CampusApp() {
   const movementBindingRef = useRef<MovementKeyBinding | null>(null);
   const interactionSelectorRef = useRef<HTMLDivElement | null>(null);
   const pendingInteractionRef = useRef<InteractionRequest | null>(null);
+  const pendingScreenShareStartRef = useRef<string | null>(null);
+  const screenShareVideoRef = useRef<HTMLVideoElement | null>(null);
   const speakingIdentitiesRef = useRef<readonly string[]>([]);
   const acousticEnvironmentRef = useRef<AcousticEnvironmentSnapshot | null>(null);
   const latestSceneStateRef = useRef<{
     players: PlayerSnapshot[];
     proximity: ProximitySnapshot;
+    screenShare: ScreenShareSnapshot | null;
   } | null>(null);
 
   const [profile, setProfile] = useState<LocalProfile>(() => loadProfile());
@@ -85,6 +91,8 @@ export function CampusApp() {
   const [interactionSelectorOpen, setInteractionSelectorOpen] = useState(false);
   const [selectedInteractionKey, setSelectedInteractionKey] = useState<string | null>(null);
   const [pendingInteraction, setPendingInteraction] = useState<InteractionRequest | null>(null);
+  const [screenShare, setScreenShare] = useState<ScreenShareSnapshot | null>(null);
+  const [screenShareViewerDismissed, setScreenShareViewerDismissed] = useState(false);
   const campusMedia = useCampusMedia();
 
   const updateAcousticEnvironment = useCallback(
@@ -125,7 +133,10 @@ export function CampusApp() {
     () => players.find((player) => player.sessionId === selfSessionId) ?? null,
     [players, selfSessionId],
   );
-  const interactionOptions = useMemo(() => buildInteractionOptions(self, players), [players, self]);
+  const interactionOptions = useMemo(
+    () => buildInteractionOptions(self, players, screenShare ?? undefined),
+    [players, screenShare, self],
+  );
   const availableInteractionOptions = interactionOptions.filter((option) => option.available);
   const primaryInteraction = availableInteractionOptions[0] ?? interactionOptions[0] ?? null;
   const selectedInteractionIndex = Math.max(
@@ -135,9 +146,28 @@ export function CampusApp() {
   const selectedInteraction = interactionOptions[selectedInteractionIndex] ?? primaryInteraction;
   const highlightedInteraction = interactionSelectorOpen ? selectedInteraction : primaryInteraction;
   const interactionPanel = useMemo(
-    () => buildInteractionPanelContent(self, players, interactionOptions),
-    [interactionOptions, players, self],
+    () => buildInteractionPanelContent(self, players, interactionOptions, screenShare ?? undefined),
+    [interactionOptions, players, screenShare, self],
   );
+  const visibleScreenShare = useMemo(
+    () =>
+      screenShare?.presentations.find(
+        (presentation) => presentation.presenterSessionId !== selfSessionId,
+      ) ?? null,
+    [screenShare?.presentations, selfSessionId],
+  );
+  const ownScreenShare = useMemo(
+    () =>
+      screenShare?.presentations.find(
+        (presentation) => presentation.presenterSessionId === selfSessionId,
+      ) ?? null,
+    [screenShare?.presentations, selfSessionId],
+  );
+  const visibleScreenShareKey = visibleScreenShare
+    ? `${visibleScreenShare.stationId}:${visibleScreenShare.presenterSessionId}`
+    : null;
+  const visibleScreenSharePresenterIdentity = visibleScreenShare?.presenterSessionId ?? null;
+  const screenShareTrackVersion = campusMedia.state.screenShareTrackVersion;
   const proximityBySessionId = useMemo(
     () => new Map(proximity.peers.map((peer) => [peer.sessionId, peer])),
     [proximity.peers],
@@ -150,10 +180,13 @@ export function CampusApp() {
     latestSceneStateRef.current = null;
     interactionSelectorOpenRef.current = false;
     pendingInteractionRef.current = null;
+    pendingScreenShareStartRef.current = null;
     setInteractionAnnouncement("");
     setInteractionSelectorOpen(false);
     setSelectedInteractionKey(null);
     setPendingInteraction(null);
+    setScreenShare(null);
+    setScreenShareViewerDismissed(false);
     updateAcousticEnvironment(null);
     await campusMedia.disconnect();
 
@@ -161,6 +194,7 @@ export function CampusApp() {
     currentScene?.setSelfSessionId(null);
     currentScene?.setSpeakingIdentities([]);
     currentScene?.setHighlightedInteractableId(null);
+    currentScene?.setScreenShare(null);
     currentScene?.syncPlayers([], { radius: PROXIMITY_RADIUS, peers: [] });
 
     const abortController = new AbortController();
@@ -189,11 +223,17 @@ export function CampusApp() {
         latestSceneStateRef.current = {
           players: nextPlayers,
           proximity: state.proximity,
+          screenShare: state.screenShare,
         };
         getCampusScene(gameRef.current)?.syncPlayers(nextPlayers, state.proximity);
+        getCampusScene(gameRef.current)?.setScreenShare(state.screenShare);
         campusMedia.syncSpatialPositions(room.sessionId, nextPlayers);
         campusMedia.syncAcoustics(state.acoustic);
+        campusMedia.syncScreenShare(state.screenShare);
         updateAcousticEnvironment(state.acoustic?.environment ?? null);
+        setScreenShare((current) =>
+          current?.revision === state.screenShare?.revision ? current : state.screenShare,
+        );
 
         const now = performance.now();
 
@@ -218,6 +258,12 @@ export function CampusApp() {
         if (result.outcome === "succeeded" && result.actionId === "enter_focus") {
           void campusMedia.muteMicrophone();
         }
+        if (result.outcome === "succeeded" && result.actionId === "start_screen_share") {
+          pendingScreenShareStartRef.current = result.interactableId;
+        }
+        if (result.outcome === "succeeded" && result.actionId === "stop_screen_share") {
+          void campusMedia.stopScreenShare();
+        }
       });
 
       room.onLeave(() => {
@@ -232,15 +278,19 @@ export function CampusApp() {
         setProximity({ radius: PROXIMITY_RADIUS, peers: [] });
         interactionSelectorOpenRef.current = false;
         pendingInteractionRef.current = null;
+        pendingScreenShareStartRef.current = null;
         setInteractionAnnouncement("");
         setInteractionSelectorOpen(false);
         setSelectedInteractionKey(null);
         setPendingInteraction(null);
+        setScreenShare(null);
+        setScreenShareViewerDismissed(false);
         updateAcousticEnvironment(null);
         const scene = getCampusScene(gameRef.current);
         scene?.setSelfSessionId(null);
         scene?.setSpeakingIdentities([]);
         scene?.setHighlightedInteractableId(null);
+        scene?.setScreenShare(null);
         scene?.syncPlayers([], { radius: PROXIMITY_RADIUS, peers: [] });
         void campusMedia.disconnect();
         setConnectionState("offline");
@@ -260,7 +310,9 @@ export function CampusApp() {
     campusMedia.connect,
     campusMedia.disconnect,
     campusMedia.muteMicrophone,
+    campusMedia.stopScreenShare,
     campusMedia.syncAcoustics,
+    campusMedia.syncScreenShare,
     campusMedia.syncSpatialPositions,
     updateAcousticEnvironment,
   ]);
@@ -283,6 +335,7 @@ export function CampusApp() {
 
       if (latestState) {
         scene.syncPlayers(latestState.players, latestState.proximity);
+        scene.setScreenShare(latestState.screenShare);
       }
     });
 
@@ -297,6 +350,68 @@ export function CampusApp() {
     speakingIdentitiesRef.current = speakingIdentities;
     getCampusScene(gameRef.current)?.setSpeakingIdentities(speakingIdentities);
   }, [campusMedia.state.speakingIdentities]);
+
+  useEffect(() => {
+    const stationId = pendingScreenShareStartRef.current;
+
+    if (!stationId || ownScreenShare?.stationId !== stationId) {
+      return;
+    }
+
+    pendingScreenShareStartRef.current = null;
+    void campusMedia.startScreenShare(stationId);
+  }, [campusMedia.startScreenShare, ownScreenShare?.stationId]);
+
+  useEffect(() => {
+    const stationId = campusMedia.state.screenShareStoppedStationId;
+
+    if (!stationId) {
+      return;
+    }
+
+    const connection = roomRef.current;
+    campusMedia.acknowledgeScreenShareStopped();
+
+    if (!connection || connectionState !== "connected") {
+      return;
+    }
+
+    connection.interact(createInteractionRequestForAction(stationId, "stop_screen_share"));
+  }, [
+    campusMedia.acknowledgeScreenShareStopped,
+    campusMedia.state.screenShareStoppedStationId,
+    connectionState,
+  ]);
+
+  useEffect(() => {
+    if (visibleScreenShareKey && visibleScreenSharePresenterIdentity) {
+      setScreenShareViewerDismissed(false);
+      campusMedia.setScreenShareViewing(visibleScreenSharePresenterIdentity, true);
+    }
+  }, [
+    campusMedia.setScreenShareViewing,
+    visibleScreenShareKey,
+    visibleScreenSharePresenterIdentity,
+  ]);
+
+  useEffect(() => {
+    const video = screenShareVideoRef.current;
+
+    if (!video || !visibleScreenShare || screenShareViewerDismissed) {
+      return;
+    }
+
+    return campusMedia.attachScreenShareVideo(
+      visibleScreenShare.presenterSessionId,
+      video,
+      screenShareTrackVersion,
+    );
+  }, [
+    campusMedia.attachScreenShareVideo,
+    screenShareTrackVersion,
+    screenShareViewerDismissed,
+    visibleScreenShare,
+  ]);
 
   useEffect(() => {
     void connect();
@@ -374,10 +489,13 @@ export function CampusApp() {
     setProximity({ radius: PROXIMITY_RADIUS, peers: [] });
     interactionSelectorOpenRef.current = false;
     pendingInteractionRef.current = null;
+    pendingScreenShareStartRef.current = null;
     setInteractionAnnouncement("");
     setInteractionSelectorOpen(false);
     setSelectedInteractionKey(null);
     setPendingInteraction(null);
+    setScreenShare(null);
+    setScreenShareViewerDismissed(false);
     updateAcousticEnvironment(null);
     void connect();
   };
@@ -398,6 +516,14 @@ export function CampusApp() {
   const submitInteraction = useCallback(
     (option: InteractionOption) => {
       if (
+        option.actionId === "start_screen_share" &&
+        !canStartScreenShare(campusMedia.state.status)
+      ) {
+        setInteractionAnnouncement("A apresentação precisa do LiveKit local conectado.");
+        return;
+      }
+
+      if (
         !option.available ||
         connectionState !== "connected" ||
         pendingInteractionRef.current ||
@@ -413,7 +539,7 @@ export function CampusApp() {
       roomRef.current.interact(request);
       closeInteractionSelector();
     },
-    [closeInteractionSelector, connectionState],
+    [campusMedia.state.status, closeInteractionSelector, connectionState],
   );
 
   const handleInteractionTrigger = useCallback(() => {
@@ -665,6 +791,54 @@ export function CampusApp() {
               <p>W/S navegar · E confirmar · Esc fechar</p>
             </div>
           ) : null}
+
+          {visibleScreenShare && !screenShareViewerDismissed ? (
+            <section
+              aria-label={`Tela compartilhada por ${visibleScreenShare.presenterName}`}
+              className="screen-share-viewer"
+            >
+              <header className="screen-share-viewer__header">
+                <div>
+                  <span>
+                    <MonitorUp aria-hidden="true" size={15} />
+                    AO VIVO
+                  </span>
+                  <strong>{visibleScreenShare.presenterName} está apresentando</strong>
+                </div>
+                <button
+                  onClick={() => {
+                    setScreenShareViewerDismissed(true);
+                    campusMedia.setScreenShareViewing(visibleScreenShare.presenterSessionId, false);
+                  }}
+                  type="button"
+                >
+                  Fechar
+                </button>
+              </header>
+              <div className="screen-share-viewer__video">
+                <video
+                  aria-label={`Tela de ${visibleScreenShare.presenterName}`}
+                  muted
+                  playsInline
+                  ref={screenShareVideoRef}
+                />
+                <span>Conectando à tela…</span>
+              </div>
+            </section>
+          ) : null}
+
+          {visibleScreenShare && screenShareViewerDismissed ? (
+            <button
+              className="screen-share-reopen"
+              onClick={() => {
+                setScreenShareViewerDismissed(false);
+                campusMedia.setScreenShareViewing(visibleScreenShare.presenterSessionId, true);
+              }}
+              type="button"
+            >
+              Abrir apresentação de {visibleScreenShare.presenterName}
+            </button>
+          ) : null}
         </section>
 
         <p className="sr-only" aria-live="polite">
@@ -791,9 +965,7 @@ export function CampusApp() {
                   ? "Aguarde"
                   : availableInteractionOptions.length > 1
                     ? "Escolher"
-                    : interactionPanel.active
-                      ? "Sair"
-                      : "Interagir"}
+                    : (primaryInteraction?.actionLabel ?? "Interagir")}
               </span>
               <kbd>E</kbd>
             </button>

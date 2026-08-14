@@ -3,6 +3,7 @@ import type {
   InteractionRequest,
   InteractionResult,
   PlayerSnapshot,
+  ScreenShareSnapshot,
 } from "@ig-campus/contracts";
 import {
   getInteractionCandidates,
@@ -33,12 +34,13 @@ let fallbackRequestSequence = 0;
 export function buildInteractionOptions(
   self: PlayerSnapshot | null,
   players: readonly PlayerSnapshot[],
+  screenShare?: Pick<ScreenShareSnapshot, "presentations">,
 ): InteractionOption[] {
   if (!self) {
     return [];
   }
 
-  return getInteractionCandidates(self, players).map((candidate) => ({
+  return getInteractionCandidates(self, players, screenShare).map((candidate) => ({
     key: `${candidate.interactable.id}:${candidate.actionId}`,
     interactableId: candidate.interactable.id,
     kind: candidate.interactable.kind,
@@ -53,10 +55,17 @@ export function buildInteractionOptions(
 }
 
 export function createInteractionRequest(option: InteractionOption): InteractionRequest {
+  return createInteractionRequestForAction(option.interactableId, option.actionId);
+}
+
+export function createInteractionRequestForAction(
+  interactableId: string,
+  actionId: InteractionActionId,
+): InteractionRequest {
   return {
     requestId: createRequestId(),
-    interactableId: option.interactableId,
-    actionId: option.actionId,
+    interactableId,
+    actionId,
   };
 }
 
@@ -64,12 +73,25 @@ export function buildInteractionPanelContent(
   self: PlayerSnapshot | null,
   players: readonly PlayerSnapshot[],
   options: readonly InteractionOption[],
+  screenShare?: Pick<ScreenShareSnapshot, "presentations">,
 ): InteractionPanelContent {
   if (self?.focusMode) {
     return {
       active: true,
       label: getWorldInteractableById(self.focusDeskId)?.label ?? "Deep Work",
       help: "Deep Work ativo · áudio e aproximação protegidos.",
+    };
+  }
+
+  const ownPresentation = screenShare?.presentations.find(
+    (presentation) => presentation.presenterSessionId === self?.sessionId,
+  );
+
+  if (ownPresentation) {
+    return {
+      active: true,
+      label: getWorldInteractableById(ownPresentation.stationId)?.label ?? "Apresentação",
+      help: "Compartilhando sua tela com as pessoas próximas.",
     };
   }
 
@@ -102,9 +124,16 @@ export function getInteractionResultMessage(result: InteractionResult): string {
 
   switch (result.outcome) {
     case "succeeded":
-      return result.actionId === "leave_focus"
-        ? `Você saiu de ${label}.`
-        : `Foco ativado em ${label}.`;
+      if (result.actionId === "leave_focus") {
+        return `Você saiu de ${label}.`;
+      }
+      if (result.actionId === "start_screen_share") {
+        return `Escolha a tela para compartilhar em ${label}.`;
+      }
+      if (result.actionId === "stop_screen_share") {
+        return `Compartilhamento encerrado em ${label}.`;
+      }
+      return `Foco ativado em ${label}.`;
     case "invalid_target":
       return "Este objeto não está mais disponível no mapa.";
     case "invalid_action":
@@ -121,7 +150,16 @@ export function getInteractionResultMessage(result: InteractionResult): string {
 }
 
 export function getInteractionActionLabel(actionId: InteractionActionId): string {
-  return actionId === "leave_focus" ? "Sair do foco" : "Sentar e focar";
+  switch (actionId) {
+    case "leave_focus":
+      return "Sair do foco";
+    case "start_screen_share":
+      return "Compartilhar tela";
+    case "stop_screen_share":
+      return "Encerrar apresentação";
+    default:
+      return "Sentar e focar";
+  }
 }
 
 function createRequestId(): string {

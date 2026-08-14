@@ -7,11 +7,13 @@ import {
   type PlayerSnapshot,
   type ProximitySnapshot,
   pickPlayerColor,
+  type ScreenShareSnapshot,
   type ServerMessage,
   sanitizeDisplayName,
 } from "@ig-campus/contracts";
 import {
   buildAcousticPolicy,
+  buildScreenShareAccessPolicy,
   getAvailableSpawnPoint,
   getFacingDirection,
   getFocusBarriers,
@@ -19,6 +21,7 @@ import {
   isMoving,
   moveWithCollision,
   PROXIMITY_RADIUS,
+  type ScreenShareReservation,
   SIMULATION_RATE,
 } from "@ig-campus/game-core";
 import { WebSocket, WebSocketServer } from "ws";
@@ -34,6 +37,8 @@ const MAX_SIMULATION_DELTA_MS = 100;
 type PlayerSession = {
   acousticRevision: number;
   acousticFingerprint: string | null;
+  screenShareRevision: number;
+  screenShareFingerprint: string | null;
   socket: WebSocket;
   input: MovementInput;
   lastInputAt: number;
@@ -85,6 +90,8 @@ export function createCampusServer(options: CampusServerOptions = {}): CampusSer
     sessions.set(sessionId, {
       acousticRevision: 0,
       acousticFingerprint: null,
+      screenShareRevision: 0,
+      screenShareFingerprint: null,
       socket,
       player,
       input: createIdleInput(),
@@ -195,6 +202,8 @@ export function createCampusServer(options: CampusServerOptions = {}): CampusSer
 
   function broadcastState(): void {
     const players = [...sessions.values()].map((session) => session.player);
+    interactionService.reconcile([...sessions.values()]);
+    const screenShareReservations = interactionService.getScreenShareReservations();
 
     for (const session of sessions.values()) {
       send(session.socket, {
@@ -203,6 +212,7 @@ export function createCampusServer(options: CampusServerOptions = {}): CampusSer
         players,
         proximity: buildProximitySnapshot(session.player, players),
         acoustic: buildVersionedAcousticSnapshot(session, players),
+        screenShare: buildVersionedScreenShareSnapshot(session, players, screenShareReservations),
       });
     }
   }
@@ -269,6 +279,25 @@ function buildVersionedAcousticSnapshot(
 
   return {
     revision: session.acousticRevision,
+    ...policy,
+  };
+}
+
+function buildVersionedScreenShareSnapshot(
+  session: PlayerSession,
+  players: PlayerSnapshot[],
+  reservations: readonly ScreenShareReservation[],
+): ScreenShareSnapshot {
+  const policy = buildScreenShareAccessPolicy(session.player, players, reservations);
+  const fingerprint = JSON.stringify(policy);
+
+  if (fingerprint !== session.screenShareFingerprint) {
+    session.screenShareRevision += 1;
+    session.screenShareFingerprint = fingerprint;
+  }
+
+  return {
+    revision: session.screenShareRevision,
     ...policy,
   };
 }

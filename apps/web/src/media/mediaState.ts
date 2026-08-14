@@ -10,16 +10,24 @@ export type CampusMediaStatus =
   | "privacy-error"
   | "error";
 
+export type ScreenShareStatus = "idle" | "selecting" | "active" | "permission-denied" | "error";
+
 export type CampusMediaState = {
   status: CampusMediaStatus;
   playbackBlocked: boolean;
   speakingIdentities: string[];
+  screenShareStatus: ScreenShareStatus;
+  screenShareStoppedStationId: string | null;
+  screenShareTrackVersion: number;
 };
 
 export const INITIAL_MEDIA_STATE: CampusMediaState = {
   status: "unavailable",
   playbackBlocked: false,
   speakingIdentities: [],
+  screenShareStatus: "idle",
+  screenShareStoppedStationId: null,
+  screenShareTrackVersion: 0,
 };
 
 export function mediaStatusLabel(
@@ -51,4 +59,23 @@ export function mediaStatusLabel(
 
 export function canToggleMicrophone(status: CampusMediaStatus): boolean {
   return status === "microphone-off" || status === "active" || status === "muted";
+}
+
+export function canStartScreenShare(status: CampusMediaStatus): boolean {
+  return status === "microphone-off" || status === "active" || status === "muted";
+}
+
+export function screenShareStatusLabel(status: ScreenShareStatus): string {
+  switch (status) {
+    case "selecting":
+      return "Escolhendo uma tela";
+    case "active":
+      return "Compartilhando sua tela";
+    case "permission-denied":
+      return "Permissão de tela bloqueada";
+    case "error":
+      return "Não foi possível compartilhar a tela";
+    default:
+      return "Nenhuma apresentação ativa";
+  }
 }

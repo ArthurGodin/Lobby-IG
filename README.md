@@ -9,6 +9,7 @@ O projeto continua 100% local e sem custo:
 - mapa original em pixel art, avatar animado e câmera híbrida;
 - estado em memória;
 - áudio por proximidade com LiveKit self-hosted local;
+- compartilhamento de tela por proximidade no Telão do Pátio;
 - isolamento automático de conversas na Administração / Reitoria;
 - Cortina de Foco autoritativa: bloqueia áudio, movimento de aproximação e sinaliza Deep Work;
 - motor autoritativo de objetos interativos, usado pelas 12 estações do Desenvolvimento;
@@ -48,6 +49,12 @@ Todos entram com o microfone desligado. O navegador só pede permissão depois q
 em **Ativar microfone**. Para testar duas sessões no mesmo computador, use fones de ouvido para
 evitar retorno acústico.
 
+No **Telão do Pátio**, aproxime-se e pressione `E` para escolher **Compartilhar tela**. Apenas uma
+pessoa pode apresentar por vez; quem estiver no raio do telão recebe o vídeo. Afastar-se corta a
+assinatura, e o botão **Fechar** também interrompe o recebimento até a pessoa escolher abrir a
+apresentação novamente. O navegador sempre pede qual janela ou aba será transmitida. Câmera,
+áudio da aba, gravação e múltiplas apresentações ficam fora deste corte.
+
 Quando terminar:
 
 ```powershell
@@ -86,12 +93,13 @@ precisar ficar acessível pela internet com áudio WebRTC confiável para pessoa
 diferentes. Nesse momento, custo operacional zero só será possível se a Inforgeneses já oferecer
 servidor público e banda; o software continuará gratuito.
 
-## Áudio local
+## Mídia local
 
 O servidor gera um token temporário ligado à sessão do avatar. A chave de assinatura fica apenas
 no backend. O navegador conecta ao LiveKit com assinatura automática desativada e recebe somente
 os microfones de avatares próximos. O volume é completo na faixa mais próxima, diminui
-gradualmente e chega a zero fora do alcance.
+gradualmente e chega a zero fora do alcance. A mesma regra de acesso explícito vale para a tela:
+o servidor informa quem pode assistir, e o cliente desassina o vídeo assim que a permissão some.
 
 As zonas também definem a política acústica. Pátio, Desenvolvimento, Biblioteca e áreas comuns
 são abertas. A Administração / Reitoria é privada: somente avatares dentro dela podem assinar os
@@ -107,7 +115,6 @@ LiveKit precisam usar o IP LAN do host; isso será documentado e automatizado em
 
 ## Próximos cortes
 
-Os próximos incrementos de áudio podem incluir indicador de fala e posicionamento estéreo. O
-compartilhamento de tela por proximidade permanece posterior, porque exige limites próprios de
-banda e consentimento. Colyseus pode voltar se o protocolo multiplayer crescer o suficiente para
-justificar o framework.
+Os próximos incrementos de mídia podem incluir qualidade adaptativa, indicação de carregamento e
+controles de compartilhamento. Colyseus pode voltar se o protocolo multiplayer crescer o
+suficiente para justificar o framework.

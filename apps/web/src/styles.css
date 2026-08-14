@@ -394,7 +394,113 @@ button {
   letter-spacing: 0.02em;
 }
 
+.screen-share-viewer {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 5;
+  width: min(390px, calc(100% - 32px));
+  overflow: hidden;
+  border: 2px solid #6ed6ed;
+  border-radius: 10px;
+  background: rgba(13, 28, 31, 0.96);
+  box-shadow:
+    0 0 0 3px rgba(10, 25, 28, 0.92),
+    0 18px 38px rgba(5, 16, 19, 0.42);
+  color: #e9fbff;
+  animation: interaction-selector-in 140ms ease-out;
+}
+
+.screen-share-viewer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 11px;
+}
+
+.screen-share-viewer__header span,
+.screen-share-viewer__header strong {
+  display: block;
+}
+
+.screen-share-viewer__header span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #72e3f4;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.screen-share-viewer__header strong {
+  margin-top: 3px;
+  color: #f1fdff;
+  font-size: 13px;
+}
+
+.screen-share-viewer__header button {
+  border: 1px solid rgba(142, 227, 241, 0.44);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #d9faff;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 850;
+  padding: 6px 8px;
+}
+
+.screen-share-viewer__video {
+  position: relative;
+  min-height: 170px;
+  border-top: 1px solid rgba(142, 227, 241, 0.22);
+  background:
+    repeating-linear-gradient(90deg, rgba(110, 214, 237, 0.05) 0 1px, transparent 1px 8px), #0a1619;
+}
+
+.screen-share-viewer__video video {
+  display: block;
+  width: 100%;
+  max-height: min(36dvh, 280px);
+  min-height: 170px;
+  background: #0a1619;
+  object-fit: contain;
+}
+
+.screen-share-viewer__video span {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  border: 1px solid rgba(142, 227, 241, 0.28);
+  border-radius: 4px;
+  background: rgba(7, 19, 22, 0.78);
+  color: #bceff8;
+  font-size: 10px;
+  font-weight: 750;
+  padding: 4px 6px;
+  pointer-events: none;
+}
+
+.screen-share-reopen {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 5;
+  border: 2px solid #6ed6ed;
+  border-radius: 7px;
+  background: rgba(13, 28, 31, 0.96);
+  box-shadow: 0 0 0 3px rgba(10, 25, 28, 0.92);
+  color: #e9fbff;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 850;
+  padding: 9px 11px;
+}
+
 .interaction-selector__close:focus-visible,
+.screen-share-viewer__header button:focus-visible,
+.screen-share-reopen:focus-visible,
 .interaction-option:focus-visible {
   outline: 3px solid rgba(239, 213, 142, 0.4);
   outline-offset: 2px;
@@ -944,7 +1050,8 @@ button {
 
 @media (prefers-reduced-motion: reduce) {
   .avatar-presence--speaking .avatar-dot,
-  .interaction-selector {
+  .interaction-selector,
+  .screen-share-viewer {
     animation: none;
   }
 }
@@ -1004,6 +1111,22 @@ button {
   .map-frame {
     height: 420px;
     min-height: 420px;
+  }
+
+  .screen-share-viewer {
+    top: 10px;
+    right: 10px;
+    width: calc(100% - 20px);
+  }
+
+  .screen-share-reopen {
+    top: 10px;
+    right: 10px;
+  }
+
+  .screen-share-viewer__video,
+  .screen-share-viewer__video video {
+    min-height: 132px;
   }
 
   .campus-panel {
