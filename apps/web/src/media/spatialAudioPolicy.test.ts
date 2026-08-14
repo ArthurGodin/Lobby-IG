@@ -57,6 +57,7 @@ function player(sessionId: string, x: number): PlayerSnapshot {
     appearance: { outfitColor: "#2f7d5c" },
     facing: "down",
     moving: false,
+    focusMode: false,
     sequence: 0,
     x,
     y: 100,

@@ -59,6 +59,9 @@ export function useCampusMedia() {
   const toggleMicrophone = useCallback(() => {
     return controllerRef.current?.toggleMicrophone() ?? Promise.resolve();
   }, []);
+  const muteMicrophone = useCallback(() => {
+    return controllerRef.current?.muteMicrophone() ?? Promise.resolve();
+  }, []);
   const syncSpatialPositions = useCallback(
     (selfSessionId: string | null, players: readonly PlayerSnapshot[]) => {
       pendingSpatialRef.current = { selfSessionId, players };
@@ -85,5 +88,6 @@ export function useCampusMedia() {
     syncAcoustics,
     syncSpatialPositions,
     toggleMicrophone,
+    muteMicrophone,
   };
 }

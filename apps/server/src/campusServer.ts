@@ -14,6 +14,7 @@ import {
   buildAcousticPolicy,
   getAvailableSpawnPoint,
   getFacingDirection,
+  getFocusBarriers,
   getProximityPeer,
   isMoving,
   moveWithCollision,
@@ -73,6 +74,7 @@ export function createCampusServer(options: CampusServerOptions = {}): CampusSer
       y: spawnPoint.y,
       facing: "down",
       moving: false,
+      focusMode: false,
       sequence: 0,
     };
 
@@ -124,6 +126,15 @@ export function createCampusServer(options: CampusServerOptions = {}): CampusSer
         return;
       }
 
+      if (message.type === "focus") {
+        session.player.focusMode = message.payload.enabled;
+        if (session.player.focusMode) {
+          session.input = createIdleInput(session.input.sequence);
+        }
+        broadcastState();
+        return;
+      }
+
       if (message.payload.sequence <= session.input.sequence) {
         return;
       }
@@ -154,8 +165,18 @@ export function createCampusServer(options: CampusServerOptions = {}): CampusSer
     serverTick += 1;
 
     for (const session of sessions.values()) {
-      const input = getLeasedInput(session.input, session.lastInputAt, now);
-      const nextPosition = moveWithCollision(session.player, input, deltaMs);
+      const input = session.player.focusMode
+        ? createIdleInput(session.input.sequence)
+        : getLeasedInput(session.input, session.lastInputAt, now);
+      const nextPosition = moveWithCollision(
+        session.player,
+        input,
+        deltaMs,
+        getFocusBarriers(
+          [...sessions.values()].map((candidate) => candidate.player),
+          session.player.sessionId,
+        ),
+      );
       session.player.x = roundPosition(nextPosition.x);
       session.player.y = roundPosition(nextPosition.y);
       session.player.facing = getFacingDirection(input, session.player.facing);

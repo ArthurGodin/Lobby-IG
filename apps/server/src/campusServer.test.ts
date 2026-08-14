@@ -122,6 +122,29 @@ describe("servidor do campus", () => {
     assert.equal(state.type, "state");
   });
 
+  test("ativa a cortina de foco e fecha sua presença acústica", async () => {
+    const server = createCampusServer();
+    servers.push(server);
+    const runningServer = await server.listen(0);
+    const client = await connectClient(runningServer.websocketUrl, "Lin");
+
+    client.socket.send(JSON.stringify({ type: "focus", payload: { enabled: true } }));
+    const state = await waitForMessage(
+      client,
+      (message) =>
+        message.type === "state" &&
+        message.players.some((player) => player.name === "Lin" && player.focusMode),
+    );
+
+    assert.equal(state.type, "state");
+    if (state.type === "state") {
+      const self = state.players.find((player) => player.name === "Lin");
+      assert.ok(self?.focusMode);
+      assert.deepEqual(state.acoustic.allowedPeerSessionIds, []);
+      assert.deepEqual(state.acoustic.audiblePeers, []);
+    }
+  });
+
   test("envia proximidade personalizada para dois clientes", async () => {
     const server = createCampusServer();
     servers.push(server);

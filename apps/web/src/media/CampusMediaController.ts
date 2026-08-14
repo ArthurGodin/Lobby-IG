@@ -235,6 +235,23 @@ export class CampusMediaController {
     }
   }
 
+  async muteMicrophone(): Promise<void> {
+    const room = this.room;
+
+    if (!room?.localParticipant.isMicrophoneEnabled) {
+      return;
+    }
+
+    try {
+      await room.localParticipant.setMicrophoneEnabled(false);
+      this.detectedSpeakingIdentities.delete(room.localParticipant.identity);
+      this.refreshSpeakingState(room);
+      this.setState({ status: "muted", playbackBlocked: !room.canPlaybackAudio });
+    } catch (error) {
+      console.warn("NÃ£o foi possÃ­vel mutar o microfone ao ativar o foco.", error);
+    }
+  }
+
   async startAudio(): Promise<void> {
     const room = this.room;
 

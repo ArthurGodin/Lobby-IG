@@ -25,6 +25,7 @@ export type CampusConnection = {
   onLeave: (listener: LeaveListener) => () => void;
   sendMovement: (input: MovementInput) => void;
   updateProfile: (profile: JoinOptions) => void;
+  setFocusMode: (enabled: boolean) => void;
   leave: () => void;
 };
 
@@ -75,6 +76,9 @@ export async function joinCampus(
       },
       updateProfile(profile) {
         send(socket, { type: "profile", payload: profile });
+      },
+      setFocusMode(enabled) {
+        send(socket, { type: "focus", payload: { enabled } });
       },
       leave() {
         socket.close();

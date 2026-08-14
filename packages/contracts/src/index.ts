@@ -46,6 +46,7 @@ export type PlayerSnapshot = {
   y: number;
   facing: Direction;
   moving: boolean;
+  focusMode: boolean;
   sequence: number;
 };
 
@@ -112,6 +113,12 @@ export type ClientMessage =
   | {
       type: "move";
       payload: MovementInput;
+    }
+  | {
+      type: "focus";
+      payload: {
+        enabled: boolean;
+      };
     };
 
 export type ServerMessage =

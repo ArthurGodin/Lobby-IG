@@ -31,6 +31,7 @@ type PlayerDisplay = {
   mask: Phaser.GameObjects.Image;
   maskFramesAvailable: boolean;
   moving: boolean;
+  focusMode: boolean;
   speaking: boolean;
   speakingHalo: Phaser.GameObjects.Arc;
   facing: PlayerSnapshot["facing"];
@@ -53,6 +54,7 @@ export class CampusScene extends Phaser.Scene {
   private proximityBySessionId = new Map<string, ProximityBand>();
   private speakingIdentities = new Set<string>();
   private proximityGraphics: Phaser.GameObjects.Graphics | null = null;
+  private focusGraphics: Phaser.GameObjects.Graphics | null = null;
   private ready = false;
   private pendingSnapshot: {
     players: PlayerSnapshot[];
@@ -108,6 +110,7 @@ export class CampusScene extends Phaser.Scene {
     this.applyNearestFiltering();
     this.drawCampus();
     this.proximityGraphics = this.add.graphics().setDepth(18);
+    this.focusGraphics = this.add.graphics().setDepth(17);
 
     this.scale.on(Phaser.Scale.Events.RESIZE, this.handleResize, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -166,6 +169,7 @@ export class CampusScene extends Phaser.Scene {
 
     this.positionPlayerLabels();
     this.drawProximityRings();
+    this.drawFocusBarriers();
   }
 
   setSelfSessionId(sessionId: string | null): void {
@@ -213,6 +217,7 @@ export class CampusScene extends Phaser.Scene {
       display.authoritativeY = player.y;
       display.facing = player.facing;
       display.moving = player.moving;
+      display.focusMode = player.focusMode;
       display.mask.setTint(
         Phaser.Display.Color.HexStringToColor(player.appearance.outfitColor).color,
       );
@@ -334,6 +339,7 @@ export class CampusScene extends Phaser.Scene {
       mask,
       maskFramesAvailable: hasMask,
       moving: player.moving,
+      focusMode: player.focusMode,
       speaking: false,
       speakingHalo,
     };
@@ -366,6 +372,28 @@ export class CampusScene extends Phaser.Scene {
     graphics.strokeCircle(self.container.x, self.container.y, CLOSE_PROXIMITY_RADIUS);
   }
 
+  private drawFocusBarriers(): void {
+    const graphics = this.focusGraphics;
+    graphics?.clear();
+
+    if (!graphics) {
+      return;
+    }
+
+    for (const display of this.players.values()) {
+      if (!display.focusMode) {
+        continue;
+      }
+
+      graphics.fillStyle(0x7a5aa6, 0.12);
+      graphics.fillCircle(display.container.x, display.container.y - 12, 64);
+      graphics.lineStyle(3, 0xc8a8ff, 0.72);
+      graphics.strokeCircle(display.container.x, display.container.y - 12, 64);
+      graphics.lineStyle(1, 0xf2e9ff, 0.38);
+      graphics.strokeCircle(display.container.x, display.container.y - 12, 70);
+    }
+  }
+
   private refreshPlayerStyles(): void {
     for (const [sessionId, display] of this.players) {
       this.stylePlayer(display, sessionId);
@@ -377,8 +405,14 @@ export class CampusScene extends Phaser.Scene {
     display.speaking = isSpeaking;
     display.speakingHalo.setVisible(isSpeaking);
     display.label
-      .setBackgroundColor(isSpeaking ? "rgba(218,248,229,0.96)" : "rgba(247,249,243,0.9)")
-      .setColor(isSpeaking ? "#155f43" : "#1f2c27");
+      .setBackgroundColor(
+        display.focusMode
+          ? "rgba(240,226,255,0.98)"
+          : isSpeaking
+            ? "rgba(218,248,229,0.96)"
+            : "rgba(247,249,243,0.9)",
+      )
+      .setColor(display.focusMode ? "#5a3d7e" : isSpeaking ? "#155f43" : "#1f2c27");
     display.label.setVisible(!this.overviewEnabled);
     display.marker.setVisible(this.overviewEnabled);
 

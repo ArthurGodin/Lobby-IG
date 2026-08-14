@@ -10,6 +10,7 @@ import { PROXIMITY_RADIUS } from "@ig-campus/game-core";
 import {
   AudioLines,
   DoorOpen,
+  Focus,
   LocateFixed,
   LockKeyhole,
   Map as MapIcon,
@@ -107,6 +108,7 @@ export function CampusApp() {
     () => players.find((player) => player.sessionId === selfSessionId) ?? null,
     [players, selfSessionId],
   );
+  const focusMode = self?.focusMode ?? false;
   const proximityBySessionId = useMemo(
     () => new Map(proximity.peers.map((peer) => [peer.sessionId, peer])),
     [proximity.peers],
@@ -300,6 +302,15 @@ export function CampusApp() {
     getCampusScene(gameRef.current)?.setOverview(nextOverviewEnabled);
   };
 
+  const handleFocusToggle = async () => {
+    const nextFocusMode = !focusMode;
+    roomRef.current?.setFocusMode(nextFocusMode);
+
+    if (nextFocusMode) {
+      await campusMedia.muteMicrophone();
+    }
+  };
+
   return (
     <main className="campus-shell">
       <header className="campus-topbar">
@@ -400,6 +411,18 @@ export function CampusApp() {
               )}
               <span>{microphoneControlLabel(campusMedia.state.status)}</span>
             </button>
+
+            <button
+              aria-pressed={focusMode}
+              className={`focus-button${focusMode ? " focus-button--active" : ""}`}
+              disabled={!selfSessionId || connectionState !== "connected"}
+              onClick={handleFocusToggle}
+              title={focusMode ? "Desativar Cortina de Foco" : "Ativar Cortina de Foco"}
+              type="button"
+            >
+              <Focus aria-hidden="true" size={18} />
+              <span>{focusMode ? "Foco ativo" : "Ativar foco"}</span>
+            </button>
           </section>
 
           <section className={`media-card media-card--${campusMedia.state.status}`}>
@@ -446,6 +469,17 @@ export function CampusApp() {
             </div>
           </section>
 
+          {focusMode ? (
+            <section className="focus-card" aria-live="polite">
+              <Focus aria-hidden="true" size={17} />
+              <div>
+                <h2 className="section-kicker">Cortina de Foco</h2>
+                <strong>Deep Work ativo</strong>
+                <span>Você está protegido de áudio e aproximação.</span>
+              </div>
+            </section>
+          ) : null}
+
           <p className="sr-only" aria-live="polite">
             {acousticAnnouncement}
           </p>
@@ -491,6 +525,7 @@ export function CampusApp() {
                       selfSessionId,
                       peer,
                       isSpeaking,
+                      player.focusMode,
                     )}
                     key={player.sessionId}
                   >
@@ -670,14 +705,18 @@ function getPersonClassName(
   selfSessionId: string | null,
   peer?: ProximityPeerSnapshot,
   isSpeaking = false,
+  focusMode = false,
 ): string {
   const speakingClass = isSpeaking ? " person--speaking" : "";
+  const focusClass = focusMode ? " person--focus" : "";
 
   if (sessionId === selfSessionId) {
-    return `person person--self${speakingClass}`;
+    return `person person--self${focusClass}${speakingClass}`;
   }
 
-  return peer ? `person person--${peer.band}${speakingClass}` : `person${speakingClass}`;
+  return peer
+    ? `person person--${peer.band}${focusClass}${speakingClass}`
+    : `person${focusClass}${speakingClass}`;
 }
 
 function getPersonStatus(
@@ -686,6 +725,10 @@ function getPersonStatus(
   peer?: ProximityPeerSnapshot,
   isSpeaking = false,
 ): string {
+  if (player.focusMode) {
+    return "em foco · áudio fechado";
+  }
+
   if (player.sessionId === selfSessionId) {
     const localStatus = player.moving ? "você · andando" : "você";
     return isSpeaking ? `${localStatus} · falando agora` : localStatus;

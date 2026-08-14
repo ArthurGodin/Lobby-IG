@@ -86,6 +86,17 @@ describe("protocolo do campus", () => {
       null,
     );
   });
+
+  test("aceita somente o booleano explícito da cortina de foco", () => {
+    assert.deepEqual(
+      parseClientMessage(JSON.stringify({ type: "focus", payload: { enabled: true } })),
+      { type: "focus", payload: { enabled: true } },
+    );
+    assert.equal(
+      parseClientMessage(JSON.stringify({ type: "focus", payload: { enabled: "true" } })),
+      null,
+    );
+  });
 });
 
 describe("regras puras do mundo", () => {
@@ -212,6 +223,7 @@ function playerAt(sessionId: string, x: number, y: number): PlayerSnapshot {
     y,
     facing: "down",
     moving: false,
+    focusMode: false,
     sequence: 0,
   };
 }

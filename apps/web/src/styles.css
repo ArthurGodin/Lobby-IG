@@ -232,6 +232,7 @@ button {
 .identity-box,
 .media-card,
 .acoustic-zone-card,
+.focus-card,
 .status-card,
 .proximity-card,
 .people-list,
@@ -294,6 +295,44 @@ button {
   padding: 0 10px;
 }
 
+.focus-button {
+  display: inline-flex;
+  min-width: 92px;
+  height: 42px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid rgba(122, 90, 166, 0.35);
+  border-radius: 8px;
+  background: #f5effc;
+  color: #5a3d7e;
+  font-size: 11px;
+  font-weight: 850;
+  padding: 0 10px;
+}
+
+.focus-button--active {
+  border-color: #7a5aa6;
+  background: #7a5aa6;
+  color: #ffffff;
+}
+
+.focus-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.focus-button:not(:disabled):hover {
+  border-color: #7a5aa6;
+  background: #eadff6;
+}
+
+.focus-button--active:not(:disabled):hover {
+  background: #63468a;
+  color: #ffffff;
+}
+
 .microphone-button--active {
   border-color: #2f7d5c;
   background: #2f7d5c;
@@ -338,6 +377,7 @@ button {
 }
 
 .microphone-button:focus-visible,
+.focus-button:focus-visible,
 .audio-playback-button:focus-visible,
 .camera-button:focus-visible,
 .reconnect-button:focus-visible {
@@ -352,6 +392,35 @@ button {
   gap: 12px;
   border-left: 4px solid #8a968e;
   padding: 13px 14px 13px 11px;
+}
+
+.focus-card {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border-color: rgba(122, 90, 166, 0.38);
+  border-left: 4px solid #7a5aa6;
+  background: linear-gradient(120deg, rgba(240, 226, 255, 0.94), rgba(247, 249, 243, 0.86));
+  color: #5a3d7e;
+  padding: 12px 14px 12px 11px;
+}
+
+.focus-card strong,
+.focus-card span {
+  display: block;
+}
+
+.focus-card strong {
+  margin-top: 3px;
+  color: #5a3d7e;
+  font-size: 14px;
+}
+
+.focus-card span {
+  margin-top: 2px;
+  color: #746682;
+  font-size: 12px;
 }
 
 .media-card--active {
@@ -592,6 +661,15 @@ button {
 .person--nearby {
   border-color: rgba(47, 125, 92, 0.38);
   background: rgba(219, 238, 220, 0.48);
+}
+
+.person--focus {
+  border-color: rgba(122, 90, 166, 0.62);
+  background: rgba(240, 226, 255, 0.74);
+}
+
+.person--focus strong {
+  color: #5a3d7e;
 }
 
 .person--speaking {

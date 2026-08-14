@@ -24,10 +24,22 @@ export function parseClientMessage(rawMessage: string): ClientMessage | null {
       return input ? { type: "move", payload: input } : null;
     }
 
+    if (parsed.type === "focus") {
+      return parseFocusToggle(parsed.payload);
+    }
+
     return null;
   } catch {
     return null;
   }
+}
+
+function parseFocusToggle(value: Record<string, unknown>): ClientMessage | null {
+  if (typeof value.enabled !== "boolean") {
+    return null;
+  }
+
+  return { type: "focus", payload: { enabled: value.enabled } };
 }
 
 export function parseMovementInput(value: unknown): MovementInput | null {

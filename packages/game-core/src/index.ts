@@ -31,6 +31,14 @@ export const PLAYER_SPEED = 150;
 export const SIMULATION_RATE = 20;
 export const CLOSE_PROXIMITY_RADIUS = TILE_SIZE * 3;
 export const PROXIMITY_RADIUS = TILE_SIZE * 6;
+export const FOCUS_BARRIER_RADIUS = TILE_SIZE * 2;
+
+export type FocusBarrier = {
+  sessionId: string;
+  x: number;
+  y: number;
+  radius: number;
+};
 
 export function getSpawnPoint(index: number): Vector2 {
   const firstSpawn = SPAWN_POINTS[0] ?? { x: TILE_SIZE * 1.5, y: TILE_SIZE * 1.75 };
@@ -70,6 +78,7 @@ export function moveWithCollision(
   position: Vector2,
   input: MovementInput,
   deltaMs: number,
+  focusBarriers: readonly FocusBarrier[] = [],
 ): Vector2 {
   const axis = inputToAxis(input);
 
@@ -85,10 +94,12 @@ export function moveWithCollision(
   };
 
   const movedOnX = { x: position.x + velocity.x, y: position.y };
-  const x = canStandAt(movedOnX) ? movedOnX.x : position.x;
+  const x =
+    canStandAt(movedOnX) && canEnterFocusBarrier(movedOnX, focusBarriers) ? movedOnX.x : position.x;
 
   const movedOnY = { x, y: position.y + velocity.y };
-  const y = canStandAt(movedOnY) ? movedOnY.y : position.y;
+  const y =
+    canStandAt(movedOnY) && canEnterFocusBarrier(movedOnY, focusBarriers) ? movedOnY.y : position.y;
 
   return { x, y };
 }
@@ -174,6 +185,10 @@ export function arePlayersAcousticallyCompatible(
   first: PlayerSnapshot,
   second: PlayerSnapshot,
 ): boolean {
+  if (first.focusMode || second.focusMode) {
+    return false;
+  }
+
   const firstEnvironment = getAcousticEnvironment(first);
   const secondEnvironment = getAcousticEnvironment(second);
 
@@ -196,6 +211,8 @@ export function buildAcousticPolicy(
     .filter(
       (candidate) =>
         candidate.sessionId !== listener.sessionId &&
+        !listener.focusMode &&
+        !candidate.focusMode &&
         arePlayersAcousticallyCompatible(listener, candidate),
     )
     .sort((first, second) => first.sessionId.localeCompare(second.sessionId));
@@ -209,6 +226,24 @@ export function buildAcousticPolicy(
     allowedPeerSessionIds: compatiblePlayers.map((player) => player.sessionId),
     audiblePeers,
   };
+}
+
+export function getFocusBarriers(
+  players: readonly PlayerSnapshot[],
+  moverSessionId: string,
+): FocusBarrier[] {
+  return players
+    .filter((player) => player.sessionId !== moverSessionId && player.focusMode)
+    .map((player) => ({
+      sessionId: player.sessionId,
+      x: player.x,
+      y: player.y,
+      radius: FOCUS_BARRIER_RADIUS,
+    }));
+}
+
+function canEnterFocusBarrier(position: Vector2, barriers: readonly FocusBarrier[]): boolean {
+  return barriers.every((barrier) => getDistance(position, barrier) >= barrier.radius);
 }
 
 export function canStandAt(position: Vector2): boolean {

@@ -10,6 +10,7 @@ O projeto continua 100% local e sem custo:
 - estado em memória;
 - áudio por proximidade com LiveKit self-hosted local;
 - isolamento automático de conversas na Administração / Reitoria;
+- Cortina de Foco autoritativa: bloqueia áudio, movimento de aproximação e sinaliza Deep Work;
 - sem banco externo;
 - sem cloud;
 - sem serviço pago.
