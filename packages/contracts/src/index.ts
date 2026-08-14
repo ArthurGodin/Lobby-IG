@@ -47,7 +47,17 @@ export type PlayerSnapshot = {
   facing: Direction;
   moving: boolean;
   focusMode: boolean;
+  focusDeskId: string | null;
   sequence: number;
+};
+
+export const FOCUS_INTERACTION_OUTCOMES = ["activated", "released", "too_far", "occupied"] as const;
+export type FocusInteractionOutcome = (typeof FOCUS_INTERACTION_OUTCOMES)[number];
+
+export type FocusInteractionResult = {
+  outcome: FocusInteractionOutcome;
+  deskId: string | null;
+  deskLabel: string | null;
 };
 
 export type ProximityBand = "close" | "nearby";
@@ -137,6 +147,10 @@ export type ServerMessage =
   | {
       type: "error";
       message: string;
+    }
+  | {
+      type: "focus_result";
+      result: FocusInteractionResult;
     };
 
 export function createIdleInput(sequence = 0): MovementInput {
@@ -183,4 +197,10 @@ export function isCampusZoneId(value: unknown): value is CampusZoneId {
 
 export function isAcousticMode(value: unknown): value is AcousticMode {
   return typeof value === "string" && ACOUSTIC_MODES.some((mode) => mode === value);
+}
+
+export function isFocusInteractionOutcome(value: unknown): value is FocusInteractionOutcome {
+  return (
+    typeof value === "string" && FOCUS_INTERACTION_OUTCOMES.some((outcome) => outcome === value)
+  );
 }

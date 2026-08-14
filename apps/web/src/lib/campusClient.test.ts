@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { parseAcousticSnapshot } from "./campusClient";
+import { parseAcousticSnapshot, parseFocusInteractionResult } from "./campusClient";
 
 const validSnapshot = {
   revision: 4,
@@ -40,6 +40,27 @@ describe("snapshot acústico recebido", () => {
         allowedPeerSessionIds: [],
       }),
       null,
+    );
+  });
+});
+
+describe("resultado da interação de foco", () => {
+  test("aceita resultados coerentes e rejeita mesas ausentes", () => {
+    assert.deepEqual(
+      parseFocusInteractionResult({
+        outcome: "activated",
+        deskId: "dev-01",
+        deskLabel: "Estação 01",
+      }),
+      { outcome: "activated", deskId: "dev-01", deskLabel: "Estação 01" },
+    );
+    assert.equal(
+      parseFocusInteractionResult({ outcome: "occupied", deskId: null, deskLabel: null }),
+      null,
+    );
+    assert.deepEqual(
+      parseFocusInteractionResult({ outcome: "too_far", deskId: null, deskLabel: null }),
+      { outcome: "too_far", deskId: null, deskLabel: null },
     );
   });
 });

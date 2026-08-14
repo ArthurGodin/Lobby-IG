@@ -58,6 +58,7 @@ function player(sessionId: string, x: number): PlayerSnapshot {
     facing: "down",
     moving: false,
     focusMode: false,
+    focusDeskId: null,
     sequence: 0,
     x,
     y: 100,

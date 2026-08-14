@@ -1,13 +1,14 @@
 import type {
   AcousticSnapshot,
   ClientMessage,
+  FocusInteractionResult,
   JoinOptions,
   MediaAccessSnapshot,
   MovementInput,
   ServerMessage,
   WorldStateSnapshot,
 } from "@ig-campus/contracts";
-import { isAcousticMode, isCampusZoneId } from "@ig-campus/contracts";
+import { isAcousticMode, isCampusZoneId, isFocusInteractionOutcome } from "@ig-campus/contracts";
 
 const DEFAULT_SERVER_URL = "ws://127.0.0.1:2567";
 
@@ -17,12 +18,14 @@ export type CampusStateSnapshot = Omit<WorldStateSnapshot, "acoustic"> & {
 
 type StateListener = (state: CampusStateSnapshot) => void;
 type LeaveListener = () => void;
+type FocusResultListener = (result: FocusInteractionResult) => void;
 
 export type CampusConnection = {
   sessionId: string;
   media: MediaAccessSnapshot;
   onStateChange: (listener: StateListener) => () => void;
   onLeave: (listener: LeaveListener) => () => void;
+  onFocusResult: (listener: FocusResultListener) => () => void;
   sendMovement: (input: MovementInput) => void;
   updateProfile: (profile: JoinOptions) => void;
   setFocusMode: (enabled: boolean) => void;
@@ -41,6 +44,7 @@ export async function joinCampus(
     const socket = new WebSocket(getCampusServerUrl());
     const stateListeners = new Set<StateListener>();
     const leaveListeners = new Set<LeaveListener>();
+    const focusResultListeners = new Set<FocusResultListener>();
     let connected = false;
     let settled = false;
 
@@ -70,6 +74,10 @@ export async function joinCampus(
       onLeave(listener) {
         leaveListeners.add(listener);
         return () => leaveListeners.delete(listener);
+      },
+      onFocusResult(listener) {
+        focusResultListeners.add(listener);
+        return () => focusResultListeners.delete(listener);
       },
       sendMovement(input) {
         send(socket, { type: "move", payload: input });
@@ -117,6 +125,15 @@ export async function joinCampus(
             proximity: message.proximity,
             acoustic: parseAcousticSnapshot(message.acoustic),
           });
+        }
+      }
+
+      if (message.type === "focus_result") {
+        const result = parseFocusInteractionResult(message.result);
+        if (result) {
+          for (const listener of focusResultListeners) {
+            listener(result);
+          }
         }
       }
 
@@ -169,7 +186,12 @@ function parseServerMessage(data: unknown): ServerMessage | null {
   try {
     const parsed = JSON.parse(data) as ServerMessage;
 
-    if (parsed.type === "welcome" || parsed.type === "state" || parsed.type === "error") {
+    if (
+      parsed.type === "welcome" ||
+      parsed.type === "state" ||
+      parsed.type === "error" ||
+      parsed.type === "focus_result"
+    ) {
       return parsed;
     }
 
@@ -177,6 +199,34 @@ function parseServerMessage(data: unknown): ServerMessage | null {
   } catch {
     return null;
   }
+}
+
+export function parseFocusInteractionResult(value: unknown): FocusInteractionResult | null {
+  if (
+    !isRecord(value) ||
+    !isFocusInteractionOutcome(value.outcome) ||
+    !(value.deskId === null || isDeskText(value.deskId)) ||
+    !(value.deskLabel === null || isDeskText(value.deskLabel))
+  ) {
+    return null;
+  }
+
+  if (
+    (value.outcome === "activated" || value.outcome === "occupied") &&
+    (value.deskId === null || value.deskLabel === null)
+  ) {
+    return null;
+  }
+
+  return {
+    outcome: value.outcome,
+    deskId: value.deskId,
+    deskLabel: value.deskLabel,
+  };
+}
+
+function isDeskText(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 64;
 }
 
 export function parseAcousticSnapshot(value: unknown): AcousticSnapshot | null {

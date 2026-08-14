@@ -9,6 +9,8 @@ import type {
 } from "@ig-campus/contracts";
 import { COMMONS_ACOUSTIC_ENVIRONMENT } from "@ig-campus/contracts";
 import {
+  FOCUS_DESKS,
+  type FocusDeskDefinition,
   getPlayerCollider,
   getZoneAtPosition,
   MAP_COLUMNS,
@@ -95,11 +97,16 @@ export function moveWithCollision(
 
   const movedOnX = { x: position.x + velocity.x, y: position.y };
   const x =
-    canStandAt(movedOnX) && canEnterFocusBarrier(movedOnX, focusBarriers) ? movedOnX.x : position.x;
+    canStandAt(movedOnX) && canMoveThroughFocusBarriers(position, movedOnX, focusBarriers)
+      ? movedOnX.x
+      : position.x;
 
   const movedOnY = { x, y: position.y + velocity.y };
   const y =
-    canStandAt(movedOnY) && canEnterFocusBarrier(movedOnY, focusBarriers) ? movedOnY.y : position.y;
+    canStandAt(movedOnY) &&
+    canMoveThroughFocusBarriers({ x, y: position.y }, movedOnY, focusBarriers)
+      ? movedOnY.y
+      : position.y;
 
   return { x, y };
 }
@@ -242,8 +249,38 @@ export function getFocusBarriers(
     }));
 }
 
-function canEnterFocusBarrier(position: Vector2, barriers: readonly FocusBarrier[]): boolean {
-  return barriers.every((barrier) => getDistance(position, barrier) >= barrier.radius);
+export function getFocusDeskById(deskId: string | null): FocusDeskDefinition | null {
+  if (!deskId) {
+    return null;
+  }
+
+  return FOCUS_DESKS.find((desk) => desk.id === deskId) ?? null;
+}
+
+export function getNearestFocusDesk(position: Vector2): FocusDeskDefinition | null {
+  return (
+    FOCUS_DESKS.map((desk) => ({ desk, distance: getDistance(position, desk.seatPosition) }))
+      .filter(({ desk, distance }) => distance <= desk.interactionRadius)
+      .sort(
+        (first, second) =>
+          first.distance - second.distance || first.desk.id.localeCompare(second.desk.id),
+      )[0]?.desk ?? null
+  );
+}
+
+function canMoveThroughFocusBarriers(
+  previousPosition: Vector2,
+  nextPosition: Vector2,
+  barriers: readonly FocusBarrier[],
+): boolean {
+  return barriers.every((barrier) => {
+    const previousDistance = getDistance(previousPosition, barrier);
+    const nextDistance = getDistance(nextPosition, barrier);
+    return (
+      nextDistance >= barrier.radius ||
+      (previousDistance < barrier.radius && nextDistance > previousDistance)
+    );
+  });
 }
 
 export function canStandAt(position: Vector2): boolean {

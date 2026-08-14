@@ -7,7 +7,9 @@ import {
   CAMPUS_MAP,
   CLOSE_PROXIMITY_RADIUS,
   canStandAt,
+  FOCUS_DESKS,
   getAvailableSpawnPoint,
+  getNearestFocusDesk,
   getPlayerCollider,
   getProximityBand,
   getZoneAtPosition,
@@ -123,6 +125,16 @@ describe("regras puras do mundo", () => {
     assert.deepEqual(moveWithCollision(position, input, 100), position);
   });
 
+  test("barreira de foco bloqueia aproximação e sempre permite saída", () => {
+    const barrier = [{ sessionId: "focus", x: 100, y: 100, radius: 64 }];
+    const moveRight = { up: false, down: false, left: false, right: true, sequence: 1 };
+    const approaching = moveWithCollision({ x: 35, y: 100 }, moveRight, 100, barrier);
+    assert.equal(approaching.x, 35);
+
+    const escaping = moveWithCollision({ x: 120, y: 100 }, moveRight, 100, barrier);
+    assert.ok(escaping.x > 120);
+  });
+
   test("mapa canonico possui camadas e identificadores validos", () => {
     const expectedLength = CAMPUS_MAP.columns * CAMPUS_MAP.rows;
     assert.equal(CAMPUS_MAP.columns, 48);
@@ -135,6 +147,26 @@ describe("regras puras do mundo", () => {
       ["patio", "desenvolvimento", "biblioteca", "reitoria"],
     );
     assert.deepEqual(validateCampusMap(CAMPUS_MAP), []);
+    assert.equal(FOCUS_DESKS.length, 12);
+  });
+
+  test("encontra deterministicamente a mesa dentro do raio", () => {
+    const desk = FOCUS_DESKS[0];
+    assert.ok(desk);
+    assert.equal(getNearestFocusDesk(desk.exitPosition)?.id, desk.id);
+    assert.equal(getNearestFocusDesk({ x: 240, y: 408 }), null);
+  });
+
+  test("rejeita mesas duplicadas e saídas bloqueadas", () => {
+    const firstDesk = FOCUS_DESKS[0];
+    assert.ok(firstDesk);
+    const invalidMap = {
+      ...CAMPUS_MAP,
+      focusDesks: [firstDesk, { ...firstDesk, exitPosition: { x: 0, y: 0 } }],
+    };
+    const errors = validateCampusMap(invalidMap);
+    assert.ok(errors.some((error) => error.includes("mesa de foco duplicada")));
+    assert.ok(errors.some((error) => error.includes("saída ou raio inválido")));
   });
 
   test("classifica as bordas de zona sem ambiguidade", () => {
@@ -224,6 +256,7 @@ function playerAt(sessionId: string, x: number, y: number): PlayerSnapshot {
     facing: "down",
     moving: false,
     focusMode: false,
+    focusDeskId: null,
     sequence: 0,
   };
 }

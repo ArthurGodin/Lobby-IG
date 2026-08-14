@@ -15,6 +15,8 @@ import {
   getAvailableSpawnPoint,
   getFacingDirection,
   getFocusBarriers,
+  getFocusDeskById,
+  getNearestFocusDesk,
   getProximityPeer,
   isMoving,
   moveWithCollision,
@@ -46,6 +48,7 @@ export type CampusServer = {
 
 export type CampusServerOptions = {
   mediaAccessProvider?: MediaAccessProvider;
+  spawnPointProvider?: (players: readonly PlayerSnapshot[]) => { x: number; y: number };
 };
 
 export function createCampusServer(options: CampusServerOptions = {}): CampusServer {
@@ -62,9 +65,9 @@ export function createCampusServer(options: CampusServerOptions = {}): CampusSer
 
   websocketServer.on("connection", (socket) => {
     const sessionId = randomUUID();
-    const spawnPoint = getAvailableSpawnPoint(
-      [...sessions.values()].map((session) => session.player),
-    );
+    const connectedPlayers = [...sessions.values()].map((session) => session.player);
+    const spawnPoint =
+      options.spawnPointProvider?.(connectedPlayers) ?? getAvailableSpawnPoint(connectedPlayers);
     const player: PlayerSnapshot = {
       sessionId,
       name: "Dev",
@@ -75,6 +78,7 @@ export function createCampusServer(options: CampusServerOptions = {}): CampusSer
       facing: "down",
       moving: false,
       focusMode: false,
+      focusDeskId: null,
       sequence: 0,
     };
 
@@ -127,11 +131,11 @@ export function createCampusServer(options: CampusServerOptions = {}): CampusSer
       }
 
       if (message.type === "focus") {
-        session.player.focusMode = message.payload.enabled;
-        if (session.player.focusMode) {
-          session.input = createIdleInput(session.input.sequence);
+        if (message.payload.enabled) {
+          activateFocusDesk(session);
+        } else {
+          releaseFocusDesk(session);
         }
-        broadcastState();
         return;
       }
 
@@ -199,6 +203,82 @@ export function createCampusServer(options: CampusServerOptions = {}): CampusSer
         acoustic: buildVersionedAcousticSnapshot(session, players),
       });
     }
+  }
+
+  function activateFocusDesk(session: PlayerSession): void {
+    if (session.player.focusMode && session.player.focusDeskId) {
+      const currentDesk = getFocusDeskById(session.player.focusDeskId);
+      send(session.socket, {
+        type: "focus_result",
+        result: {
+          outcome: "activated",
+          deskId: currentDesk?.id ?? null,
+          deskLabel: currentDesk?.label ?? null,
+        },
+      });
+      return;
+    }
+
+    const desk = getNearestFocusDesk(session.player);
+
+    if (!desk) {
+      send(session.socket, {
+        type: "focus_result",
+        result: { outcome: "too_far", deskId: null, deskLabel: null },
+      });
+      return;
+    }
+
+    const occupant = [...sessions.values()].find(
+      (candidate) =>
+        candidate.player.sessionId !== session.player.sessionId &&
+        candidate.player.focusDeskId === desk.id,
+    );
+
+    if (occupant) {
+      send(session.socket, {
+        type: "focus_result",
+        result: { outcome: "occupied", deskId: desk.id, deskLabel: desk.label },
+      });
+      return;
+    }
+
+    session.player.x = desk.seatPosition.x;
+    session.player.y = desk.seatPosition.y;
+    session.player.facing = desk.facing;
+    session.player.moving = false;
+    session.player.focusMode = true;
+    session.player.focusDeskId = desk.id;
+    session.input = createIdleInput(session.input.sequence);
+    send(session.socket, {
+      type: "focus_result",
+      result: { outcome: "activated", deskId: desk.id, deskLabel: desk.label },
+    });
+    broadcastState();
+  }
+
+  function releaseFocusDesk(session: PlayerSession): void {
+    const desk = getFocusDeskById(session.player.focusDeskId);
+    session.player.focusMode = false;
+    session.player.focusDeskId = null;
+    session.player.moving = false;
+    session.input = createIdleInput(session.input.sequence);
+
+    if (desk) {
+      session.player.x = desk.exitPosition.x;
+      session.player.y = desk.exitPosition.y;
+      session.player.facing = "down";
+    }
+
+    send(session.socket, {
+      type: "focus_result",
+      result: {
+        outcome: "released",
+        deskId: desk?.id ?? null,
+        deskLabel: desk?.label ?? null,
+      },
+    });
+    broadcastState();
   }
 
   return {

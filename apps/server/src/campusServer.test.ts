@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
 import { createIdleInput, type MovementInput, type ServerMessage } from "@ig-campus/contracts";
+import { FOCUS_DESKS } from "@ig-campus/game-core";
 import WebSocket from "ws";
 import {
   type CampusServer,
@@ -123,7 +124,9 @@ describe("servidor do campus", () => {
   });
 
   test("ativa a cortina de foco e fecha sua presença acústica", async () => {
-    const server = createCampusServer();
+    const desk = FOCUS_DESKS[0];
+    assert.ok(desk);
+    const server = createCampusServer({ spawnPointProvider: () => desk.exitPosition });
     servers.push(server);
     const runningServer = await server.listen(0);
     const client = await connectClient(runningServer.websocketUrl, "Lin");
@@ -140,9 +143,74 @@ describe("servidor do campus", () => {
     if (state.type === "state") {
       const self = state.players.find((player) => player.name === "Lin");
       assert.ok(self?.focusMode);
+      assert.equal(self?.focusDeskId, desk.id);
       assert.deepEqual(state.acoustic.allowedPeerSessionIds, []);
       assert.deepEqual(state.acoustic.audiblePeers, []);
+
+      client.socket.send(
+        JSON.stringify({
+          type: "move",
+          payload: { up: false, down: false, left: false, right: true, sequence: 1 },
+        }),
+      );
+      const afterMovement = await waitForMessage(
+        client,
+        (message) => message.type === "state" && message.serverTick > state.serverTick,
+      );
+      assert.equal(afterMovement.type, "state");
+      if (afterMovement.type === "state") {
+        const anchored = afterMovement.players.find((player) => player.name === "Lin");
+        assert.equal(anchored?.x, desk.seatPosition.x);
+        assert.equal(anchored?.y, desk.seatPosition.y);
+      }
     }
+  });
+
+  test("rejeita mesa distante, resolve disputa e libera a ocupação", async () => {
+    const desk = FOCUS_DESKS[0];
+    assert.ok(desk);
+    const distantServer = createCampusServer();
+    servers.push(distantServer);
+    const distantRunning = await distantServer.listen(0);
+    const distant = await connectClient(distantRunning.websocketUrl, "Longe");
+    distant.socket.send(JSON.stringify({ type: "focus", payload: { enabled: true } }));
+    const tooFar = await waitForMessage(distant, (message) => message.type === "focus_result");
+    assert.deepEqual(tooFar, {
+      type: "focus_result",
+      result: { outcome: "too_far", deskId: null, deskLabel: null },
+    });
+
+    const server = createCampusServer({ spawnPointProvider: () => desk.exitPosition });
+    servers.push(server);
+    const runningServer = await server.listen(0);
+    const alpha = await connectClient(runningServer.websocketUrl, "Alpha");
+    const beta = await connectClient(runningServer.websocketUrl, "Beta");
+
+    alpha.socket.send(JSON.stringify({ type: "focus", payload: { enabled: true } }));
+    await waitForMessage(
+      alpha,
+      (message) => message.type === "focus_result" && message.result.outcome === "activated",
+    );
+    beta.socket.send(JSON.stringify({ type: "focus", payload: { enabled: true } }));
+    const occupied = await waitForMessage(
+      beta,
+      (message) => message.type === "focus_result" && message.result.outcome === "occupied",
+    );
+    assert.equal(occupied.type, "focus_result");
+
+    alpha.socket.send(JSON.stringify({ type: "focus", payload: { enabled: false } }));
+    const released = await waitForMessage(
+      alpha,
+      (message) => message.type === "focus_result" && message.result.outcome === "released",
+    );
+    assert.equal(released.type, "focus_result");
+
+    beta.socket.send(JSON.stringify({ type: "focus", payload: { enabled: true } }));
+    const activated = await waitForMessage(
+      beta,
+      (message) => message.type === "focus_result" && message.result.outcome === "activated",
+    );
+    assert.equal(activated.type, "focus_result");
   });
 
   test("envia proximidade personalizada para dois clientes", async () => {

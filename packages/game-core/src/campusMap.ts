@@ -57,6 +57,15 @@ export type CampusZone = {
   rect: Rect;
 };
 
+export type FocusDeskDefinition = {
+  id: string;
+  label: string;
+  seatPosition: Vector2;
+  exitPosition: Vector2;
+  facing: "up" | "down" | "left" | "right";
+  interactionRadius: number;
+};
+
 export type CampusMapDefinition = {
   id: "inforgeneses-campus";
   columns: number;
@@ -68,6 +77,7 @@ export type CampusMapDefinition = {
     decorations: CampusMapLayer;
   };
   zones: readonly CampusZone[];
+  focusDesks: readonly FocusDeskDefinition[];
   spawns: readonly Vector2[];
 };
 
@@ -111,6 +121,7 @@ export const MAP_ROWS = CAMPUS_MAP.rows;
 export const MAP_WIDTH = MAP_COLUMNS * CAMPUS_MAP.tileSize;
 export const MAP_HEIGHT = MAP_ROWS * CAMPUS_MAP.tileSize;
 export const ZONES: readonly CampusZone[] = CAMPUS_MAP.zones;
+export const FOCUS_DESKS: readonly FocusDeskDefinition[] = CAMPUS_MAP.focusDesks;
 export const SPAWN_POINTS: readonly Vector2[] = CAMPUS_MAP.spawns;
 export const OBSTACLES: readonly Rect[] = deriveObstacles(CAMPUS_MAP);
 
@@ -236,6 +247,35 @@ export function validateCampusMap(map: CampusMapDefinition): string[] {
     }
   });
 
+  const deskIds = new Set<string>();
+
+  for (const desk of map.focusDesks) {
+    if (!desk.id || deskIds.has(desk.id)) {
+      errors.push(`mesa de foco duplicada ou sem id: ${desk.id || "vazia"}`);
+    }
+    deskIds.add(desk.id);
+
+    if (
+      !isRectWithinDimensions(
+        getPlayerColliderForMap(desk.seatPosition, map),
+        map.columns * map.tileSize,
+        map.rows * map.tileSize,
+      )
+    ) {
+      errors.push(`assento de mesa fora do mapa: ${desk.id}`);
+    }
+
+    const exitCollider = getPlayerColliderForMap(desk.exitPosition, map);
+    if (
+      !Number.isFinite(desk.interactionRadius) ||
+      desk.interactionRadius <= 0 ||
+      !isRectWithinDimensions(exitCollider, map.columns * map.tileSize, map.rows * map.tileSize) ||
+      obstacles.some((obstacle) => rectanglesOverlap(exitCollider, obstacle))
+    ) {
+      errors.push(`saída ou raio inválido para mesa: ${desk.id}`);
+    }
+  }
+
   return errors;
 }
 
@@ -263,6 +303,20 @@ function createCampusMap(): CampusMapDefinition {
       createZone("desenvolvimento", "Desenvolvimento", "open", 26, 2, 20, 13),
       createZone("biblioteca", "Biblioteca", "open", 2, 19, 19, 13),
       createZone("reitoria", "Administração / Reitoria", "private", 26, 19, 20, 13),
+    ]),
+    focusDesks: Object.freeze([
+      createFocusDesk("dev-01", "Estação 01", 29, 5),
+      createFocusDesk("dev-02", "Estação 02", 32, 5),
+      createFocusDesk("dev-03", "Estação 03", 39, 5),
+      createFocusDesk("dev-04", "Estação 04", 42, 5),
+      createFocusDesk("dev-05", "Estação 05", 29, 8),
+      createFocusDesk("dev-06", "Estação 06", 32, 8),
+      createFocusDesk("dev-07", "Estação 07", 39, 8),
+      createFocusDesk("dev-08", "Estação 08", 42, 8),
+      createFocusDesk("dev-09", "Estação 09", 29, 11),
+      createFocusDesk("dev-10", "Estação 10", 32, 11),
+      createFocusDesk("dev-11", "Estação 11", 39, 11),
+      createFocusDesk("dev-12", "Estação 12", 42, 11),
     ]),
     spawns: Object.freeze([
       feetAtTile(7, 12),
@@ -443,6 +497,22 @@ function feetAtTile(column: number, row: number): Readonly<Vector2> {
   return Object.freeze({
     x: (column + 0.5) * TILE_SIZE,
     y: (row + 0.75) * TILE_SIZE,
+  });
+}
+
+function createFocusDesk(
+  id: string,
+  label: string,
+  computerColumn: number,
+  computerRow: number,
+): Readonly<FocusDeskDefinition> {
+  return Object.freeze({
+    id,
+    label,
+    seatPosition: feetAtTile(computerColumn, computerRow + 1),
+    exitPosition: feetAtTile(computerColumn + 1, computerRow + 1),
+    facing: "up",
+    interactionRadius: TILE_SIZE * 1.75,
   });
 }
 

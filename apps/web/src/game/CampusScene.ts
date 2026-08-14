@@ -4,6 +4,8 @@ import {
   CAMPUS_MAP,
   type CampusMapLayer,
   CLOSE_PROXIMITY_RADIUS,
+  FOCUS_DESKS,
+  getNearestFocusDesk,
   MAP_HEIGHT,
   MAP_WIDTH,
   PROXIMITY_RADIUS,
@@ -32,6 +34,7 @@ type PlayerDisplay = {
   maskFramesAvailable: boolean;
   moving: boolean;
   focusMode: boolean;
+  focusDeskId: string | null;
   speaking: boolean;
   speakingHalo: Phaser.GameObjects.Arc;
   facing: PlayerSnapshot["facing"];
@@ -55,6 +58,7 @@ export class CampusScene extends Phaser.Scene {
   private speakingIdentities = new Set<string>();
   private proximityGraphics: Phaser.GameObjects.Graphics | null = null;
   private focusGraphics: Phaser.GameObjects.Graphics | null = null;
+  private focusDeskGraphics: Phaser.GameObjects.Graphics | null = null;
   private ready = false;
   private pendingSnapshot: {
     players: PlayerSnapshot[];
@@ -111,6 +115,7 @@ export class CampusScene extends Phaser.Scene {
     this.drawCampus();
     this.proximityGraphics = this.add.graphics().setDepth(18);
     this.focusGraphics = this.add.graphics().setDepth(17);
+    this.focusDeskGraphics = this.add.graphics().setDepth(16);
 
     this.scale.on(Phaser.Scale.Events.RESIZE, this.handleResize, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -170,6 +175,7 @@ export class CampusScene extends Phaser.Scene {
     this.positionPlayerLabels();
     this.drawProximityRings();
     this.drawFocusBarriers();
+    this.drawFocusDesks();
   }
 
   setSelfSessionId(sessionId: string | null): void {
@@ -218,6 +224,7 @@ export class CampusScene extends Phaser.Scene {
       display.facing = player.facing;
       display.moving = player.moving;
       display.focusMode = player.focusMode;
+      display.focusDeskId = player.focusDeskId;
       display.mask.setTint(
         Phaser.Display.Color.HexStringToColor(player.appearance.outfitColor).color,
       );
@@ -340,6 +347,7 @@ export class CampusScene extends Phaser.Scene {
       maskFramesAvailable: hasMask,
       moving: player.moving,
       focusMode: player.focusMode,
+      focusDeskId: player.focusDeskId,
       speaking: false,
       speakingHalo,
     };
@@ -391,6 +399,42 @@ export class CampusScene extends Phaser.Scene {
       graphics.strokeCircle(display.container.x, display.container.y - 12, 64);
       graphics.lineStyle(1, 0xf2e9ff, 0.38);
       graphics.strokeCircle(display.container.x, display.container.y - 12, 70);
+    }
+  }
+
+  private drawFocusDesks(): void {
+    const graphics = this.focusDeskGraphics;
+    graphics?.clear();
+
+    if (!graphics) {
+      return;
+    }
+
+    const occupiedDeskIds = new Set(
+      [...this.players.values()]
+        .map((display) => display.focusDeskId)
+        .filter((deskId): deskId is string => deskId !== null),
+    );
+    const self = this.selfSessionId ? this.players.get(this.selfSessionId) : null;
+    const nearbyDesk =
+      self && !self.focusMode
+        ? getNearestFocusDesk({ x: self.authoritativeX, y: self.authoritativeY })
+        : null;
+
+    for (const desk of FOCUS_DESKS) {
+      const occupied = occupiedDeskIds.has(desk.id);
+      const nearby = nearbyDesk?.id === desk.id;
+
+      if (!occupied && !nearby) {
+        continue;
+      }
+
+      const color = occupied ? 0x7a5aa6 : 0xc89b30;
+      const alpha = occupied ? 0.62 : 0.86;
+      graphics.fillStyle(color, occupied ? 0.12 : 0.1);
+      graphics.fillRoundedRect(desk.seatPosition.x - 22, desk.seatPosition.y - 38, 44, 42, 8);
+      graphics.lineStyle(3, color, alpha);
+      graphics.strokeRoundedRect(desk.seatPosition.x - 22, desk.seatPosition.y - 38, 44, 42, 8);
     }
   }
 

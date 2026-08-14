@@ -1,12 +1,13 @@
 import type {
   AcousticEnvironmentSnapshot,
+  FocusInteractionResult,
   PlayerColor,
   PlayerSnapshot,
   ProximityPeerSnapshot,
   ProximitySnapshot,
 } from "@ig-campus/contracts";
 import { isPlayerColor, pickPlayerColor, sanitizeDisplayName } from "@ig-campus/contracts";
-import { PROXIMITY_RADIUS } from "@ig-campus/game-core";
+import { getFocusDeskById, getNearestFocusDesk, PROXIMITY_RADIUS } from "@ig-campus/game-core";
 import {
   AudioLines,
   DoorOpen,
@@ -68,6 +69,7 @@ export function CampusApp() {
   const [acousticEnvironment, setAcousticEnvironment] =
     useState<AcousticEnvironmentSnapshot | null>(null);
   const [acousticAnnouncement, setAcousticAnnouncement] = useState("");
+  const [focusAnnouncement, setFocusAnnouncement] = useState("");
   const campusMedia = useCampusMedia();
 
   const updateAcousticEnvironment = useCallback(
@@ -109,6 +111,14 @@ export function CampusApp() {
     [players, selfSessionId],
   );
   const focusMode = self?.focusMode ?? false;
+  const activeFocusDesk = getFocusDeskById(self?.focusDeskId ?? null);
+  const nearbyFocusDesk = self && !focusMode ? getNearestFocusDesk(self) : null;
+  const nearbyDeskOccupant = nearbyFocusDesk
+    ? players.find(
+        (player) => player.sessionId !== selfSessionId && player.focusDeskId === nearbyFocusDesk.id,
+      )
+    : null;
+  const canEnterFocus = Boolean(nearbyFocusDesk && !nearbyDeskOccupant);
   const proximityBySessionId = useMemo(
     () => new Map(proximity.peers.map((peer) => [peer.sessionId, peer])),
     [proximity.peers],
@@ -119,6 +129,7 @@ export function CampusApp() {
     roomRef.current?.leave();
     roomRef.current = null;
     latestSceneStateRef.current = null;
+    setFocusAnnouncement("");
     updateAcousticEnvironment(null);
     await campusMedia.disconnect();
 
@@ -168,6 +179,13 @@ export function CampusApp() {
         }
       });
 
+      room.onFocusResult((result) => {
+        setFocusAnnouncement(getFocusResultMessage(result));
+        if (result.outcome === "activated") {
+          void campusMedia.muteMicrophone();
+        }
+      });
+
       room.onLeave(() => {
         if (roomRef.current !== room) {
           return;
@@ -178,6 +196,7 @@ export function CampusApp() {
         setSelfSessionId(null);
         setPlayers([]);
         setProximity({ radius: PROXIMITY_RADIUS, peers: [] });
+        setFocusAnnouncement("");
         updateAcousticEnvironment(null);
         const scene = getCampusScene(gameRef.current);
         scene?.setSelfSessionId(null);
@@ -200,6 +219,7 @@ export function CampusApp() {
   }, [
     campusMedia.connect,
     campusMedia.disconnect,
+    campusMedia.muteMicrophone,
     campusMedia.syncAcoustics,
     campusMedia.syncSpatialPositions,
     updateAcousticEnvironment,
@@ -291,6 +311,7 @@ export function CampusApp() {
     getCampusScene(gameRef.current)?.setOverview(false);
     setPlayers([]);
     setProximity({ radius: PROXIMITY_RADIUS, peers: [] });
+    setFocusAnnouncement("");
     updateAcousticEnvironment(null);
     void connect();
   };
@@ -302,14 +323,43 @@ export function CampusApp() {
     getCampusScene(gameRef.current)?.setOverview(nextOverviewEnabled);
   };
 
-  const handleFocusToggle = async () => {
-    const nextFocusMode = !focusMode;
-    roomRef.current?.setFocusMode(nextFocusMode);
-
-    if (nextFocusMode) {
-      await campusMedia.muteMicrophone();
+  const handleFocusToggle = useCallback(() => {
+    if (!focusMode && !canEnterFocus) {
+      return;
     }
-  };
+
+    setFocusAnnouncement("");
+    roomRef.current?.setFocusMode(!focusMode);
+  }, [canEnterFocus, focusMode]);
+
+  useEffect(() => {
+    const handleInteractionKey = (event: KeyboardEvent) => {
+      if (
+        event.key.toLowerCase() !== "e" ||
+        event.repeat ||
+        isEditableTarget(event.target) ||
+        connectionState !== "connected" ||
+        (!focusMode && !canEnterFocus)
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      handleFocusToggle();
+    };
+
+    window.addEventListener("keydown", handleInteractionKey);
+    return () => window.removeEventListener("keydown", handleInteractionKey);
+  }, [canEnterFocus, connectionState, focusMode, handleFocusToggle]);
+
+  useEffect(() => {
+    if (!focusAnnouncement) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setFocusAnnouncement(""), 3_500);
+    return () => window.clearTimeout(timer);
+  }, [focusAnnouncement]);
 
   return (
     <main className="campus-shell">
@@ -355,6 +405,12 @@ export function CampusApp() {
             <div className="map-mode-indicator">
               <MapIcon aria-hidden="true" size={14} />
               Campus completo · movimento ativo
+            </div>
+          ) : null}
+          {focusMode || canEnterFocus ? (
+            <div className="desk-interaction-prompt">
+              <kbd>E</kbd>
+              <span>{focusMode ? "Sair do foco" : `Sentar em ${nearbyFocusDesk?.label}`}</span>
             </div>
           ) : null}
         </div>
@@ -411,18 +467,6 @@ export function CampusApp() {
               )}
               <span>{microphoneControlLabel(campusMedia.state.status)}</span>
             </button>
-
-            <button
-              aria-pressed={focusMode}
-              className={`focus-button${focusMode ? " focus-button--active" : ""}`}
-              disabled={!selfSessionId || connectionState !== "connected"}
-              onClick={handleFocusToggle}
-              title={focusMode ? "Desativar Cortina de Foco" : "Ativar Cortina de Foco"}
-              type="button"
-            >
-              <Focus aria-hidden="true" size={18} />
-              <span>{focusMode ? "Foco ativo" : "Ativar foco"}</span>
-            </button>
           </section>
 
           <section className={`media-card media-card--${campusMedia.state.status}`}>
@@ -469,15 +513,35 @@ export function CampusApp() {
             </div>
           </section>
 
-          {focusMode ? (
-            <section className="focus-card" aria-live="polite">
-              <Focus aria-hidden="true" size={17} />
-              <div>
-                <h2 className="section-kicker">Cortina de Foco</h2>
-                <strong>Deep Work ativo</strong>
-                <span>Você está protegido de áudio e aproximação.</span>
-              </div>
-            </section>
+          <section className={`focus-desk-card${focusMode ? " focus-desk-card--active" : ""}`}>
+            <Focus aria-hidden="true" size={18} />
+            <div>
+              <h2 className="section-kicker">Estação de foco</h2>
+              <strong>
+                {activeFocusDesk?.label ?? nearbyFocusDesk?.label ?? "Nenhuma mesa próxima"}
+              </strong>
+              <span>
+                {getFocusDeskHelp(focusMode, nearbyFocusDesk?.label, nearbyDeskOccupant?.name)}
+              </span>
+            </div>
+            <button
+              aria-pressed={focusMode}
+              className={`focus-button${focusMode ? " focus-button--active" : ""}`}
+              disabled={
+                !selfSessionId || connectionState !== "connected" || (!focusMode && !canEnterFocus)
+              }
+              onClick={handleFocusToggle}
+              type="button"
+            >
+              <span>{focusMode ? "Sair" : "Sentar"}</span>
+              <kbd>E</kbd>
+            </button>
+          </section>
+
+          {focusAnnouncement ? (
+            <p className="focus-feedback" aria-live="polite">
+              {focusAnnouncement}
+            </p>
           ) : null}
 
           <p className="sr-only" aria-live="polite">
@@ -630,6 +694,39 @@ function proximityAudioLabel(status: Parameters<typeof canToggleMicrophone>[0]):
   }
 
   return "O áudio combina ambiente e distância.";
+}
+
+function getFocusDeskHelp(
+  focusMode: boolean,
+  nearbyDeskLabel?: string,
+  occupantName?: string,
+): string {
+  if (focusMode) {
+    return "Deep Work ativo · áudio e aproximação protegidos.";
+  }
+
+  if (occupantName) {
+    return `${nearbyDeskLabel ?? "Esta mesa"} está ocupada por ${occupantName}.`;
+  }
+
+  if (nearbyDeskLabel) {
+    return "Pressione E ou use o botão para sentar.";
+  }
+
+  return "Aproxime-se de uma estação do Desenvolvimento.";
+}
+
+function getFocusResultMessage(result: FocusInteractionResult): string {
+  switch (result.outcome) {
+    case "activated":
+      return `Foco ativado em ${result.deskLabel}.`;
+    case "released":
+      return result.deskLabel ? `Você saiu de ${result.deskLabel}.` : "Foco encerrado.";
+    case "occupied":
+      return `${result.deskLabel} acabou de ser ocupada.`;
+    case "too_far":
+      return "Aproxime-se de uma estação de foco para sentar.";
+  }
 }
 
 function getCampusScene(game: Phaser.Game | null): CampusScene | null {
