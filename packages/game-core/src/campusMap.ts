@@ -1,4 +1,5 @@
 import type { AcousticMode, CampusZoneId } from "@ig-campus/contracts";
+import defaultCampusMap from "./campus.json" with { type: "json" };
 
 export type Vector2 = {
   x: number;
@@ -57,7 +58,7 @@ export type CampusZone = {
   rect: Rect;
 };
 
-export const WORLD_INTERACTABLE_KINDS = ["focus_desk", "screen_station"] as const;
+export const WORLD_INTERACTABLE_KINDS = ["focus_desk", "screen_station", "whiteboard"] as const;
 export type WorldInteractableKind = (typeof WORLD_INTERACTABLE_KINDS)[number];
 
 export type WorldInteractableBase = {
@@ -81,7 +82,14 @@ export type ScreenStationDefinition = WorldInteractableBase & {
   audienceRadius: number;
 };
 
-export type WorldInteractableDefinition = FocusDeskDefinition | ScreenStationDefinition;
+export type WhiteboardDefinition = WorldInteractableBase & {
+  kind: "whiteboard";
+};
+
+export type WorldInteractableDefinition =
+  | FocusDeskDefinition
+  | ScreenStationDefinition
+  | WhiteboardDefinition;
 
 export type CampusMapDefinition = {
   id: "inforgeneses-campus";
@@ -102,10 +110,6 @@ export type PlayerCollider = {
   width: number;
   height: number;
 };
-
-const CAMPUS_COLUMNS = 48;
-const CAMPUS_ROWS = 34;
-const EMPTY_TILE: CampusTileId = "empty";
 
 export const PLAYER_COLLIDER: Readonly<PlayerCollider> = Object.freeze({
   width: 18,
@@ -131,16 +135,33 @@ const BLOCKING_TILE_IDS: ReadonlySet<CampusTileId> = new Set([
   "sign",
 ]);
 
-export const CAMPUS_MAP: CampusMapDefinition = createCampusMap();
+export let CAMPUS_MAP: CampusMapDefinition = defaultCampusMap as unknown as CampusMapDefinition;
 
-export const MAP_COLUMNS = CAMPUS_MAP.columns;
-export const MAP_ROWS = CAMPUS_MAP.rows;
-export const MAP_WIDTH = MAP_COLUMNS * CAMPUS_MAP.tileSize;
-export const MAP_HEIGHT = MAP_ROWS * CAMPUS_MAP.tileSize;
-export const ZONES: readonly CampusZone[] = CAMPUS_MAP.zones;
-export const INTERACTABLES: readonly WorldInteractableDefinition[] = CAMPUS_MAP.interactables;
-export const SPAWN_POINTS: readonly Vector2[] = CAMPUS_MAP.spawns;
-export const OBSTACLES: readonly Rect[] = deriveObstacles(CAMPUS_MAP);
+export let MAP_COLUMNS = CAMPUS_MAP.columns;
+export let MAP_ROWS = CAMPUS_MAP.rows;
+export let MAP_WIDTH = MAP_COLUMNS * CAMPUS_MAP.tileSize;
+export let MAP_HEIGHT = MAP_ROWS * CAMPUS_MAP.tileSize;
+export let ZONES: readonly CampusZone[] = CAMPUS_MAP.zones;
+export let INTERACTABLES: readonly WorldInteractableDefinition[] = CAMPUS_MAP.interactables;
+export let SPAWN_POINTS: readonly Vector2[] = CAMPUS_MAP.spawns;
+export let OBSTACLES: readonly Rect[] = deriveObstacles(CAMPUS_MAP);
+
+export function loadCampusMap(newMap: CampusMapDefinition): void {
+  CAMPUS_MAP = newMap;
+  MAP_COLUMNS = CAMPUS_MAP.columns;
+  MAP_ROWS = CAMPUS_MAP.rows;
+  MAP_WIDTH = MAP_COLUMNS * CAMPUS_MAP.tileSize;
+  MAP_HEIGHT = MAP_ROWS * CAMPUS_MAP.tileSize;
+  ZONES = CAMPUS_MAP.zones;
+  INTERACTABLES = CAMPUS_MAP.interactables;
+  SPAWN_POINTS = CAMPUS_MAP.spawns;
+  OBSTACLES = deriveObstacles(CAMPUS_MAP);
+
+  const validationErrors = validateCampusMap(CAMPUS_MAP);
+  if (validationErrors.length > 0) {
+    throw new Error(`Mapa canonico invalido:\n${validationErrors.join("\n")}`);
+  }
+}
 
 const validationErrors = validateCampusMap(CAMPUS_MAP);
 
@@ -201,10 +222,6 @@ export function validateCampusMap(map: CampusMapDefinition): string[] {
   const errors: string[] = [];
   const expectedLayerLength = map.columns * map.rows;
   const knownTileIds = new Set<string>(CAMPUS_TILE_IDS);
-
-  if (map.columns !== CAMPUS_COLUMNS || map.rows !== CAMPUS_ROWS) {
-    errors.push(`dimensoes esperadas: ${CAMPUS_COLUMNS}x${CAMPUS_ROWS}`);
-  }
 
   if (map.tileSize !== TILE_SIZE) {
     errors.push(`tileSize esperado: ${TILE_SIZE}`);
@@ -330,264 +347,7 @@ export function validateCampusMap(map: CampusMapDefinition): string[] {
   return errors;
 }
 
-function createCampusMap(): CampusMapDefinition {
-  const ground = createLayer("grass");
-  const structures = createLayer(EMPTY_TILE);
-  const decorations = createLayer(EMPTY_TILE);
-
-  paintGround(ground);
-  paintStructures(structures);
-  paintDecorations(decorations);
-
-  return Object.freeze({
-    id: "inforgeneses-campus",
-    columns: CAMPUS_COLUMNS,
-    rows: CAMPUS_ROWS,
-    tileSize: TILE_SIZE,
-    layers: Object.freeze({
-      ground: Object.freeze(ground),
-      structures: Object.freeze(structures),
-      decorations: Object.freeze(decorations),
-    }),
-    zones: Object.freeze([
-      createZone("patio", "Pátio", "open", 2, 2, 19, 13),
-      createZone("desenvolvimento", "Desenvolvimento", "open", 26, 2, 20, 13),
-      createZone("biblioteca", "Biblioteca", "open", 2, 19, 19, 13),
-      createZone("reitoria", "Administração / Reitoria", "private", 26, 19, 20, 13),
-    ]),
-    interactables: Object.freeze([
-      createScreenStation("patio-screen", "Telão do Pátio", 15, 5),
-      createFocusDesk("dev-01", "Estação 01", 29, 5),
-      createFocusDesk("dev-02", "Estação 02", 32, 5),
-      createFocusDesk("dev-03", "Estação 03", 39, 5),
-      createFocusDesk("dev-04", "Estação 04", 42, 5),
-      createFocusDesk("dev-05", "Estação 05", 29, 8),
-      createFocusDesk("dev-06", "Estação 06", 32, 8),
-      createFocusDesk("dev-07", "Estação 07", 39, 8),
-      createFocusDesk("dev-08", "Estação 08", 42, 8),
-      createFocusDesk("dev-09", "Estação 09", 29, 11),
-      createFocusDesk("dev-10", "Estação 10", 32, 11),
-      createFocusDesk("dev-11", "Estação 11", 39, 11),
-      createFocusDesk("dev-12", "Estação 12", 42, 11),
-    ]),
-    spawns: Object.freeze([
-      feetAtTile(7, 12),
-      feetAtTile(9, 12),
-      feetAtTile(7, 10),
-      feetAtTile(9, 10),
-      feetAtTile(23, 16),
-      feetAtTile(24, 17),
-    ]),
-  });
-}
-
-function paintGround(layer: CampusTileId[]): void {
-  fillTileRect(layer, 1, 15, 46, 4, "path");
-  fillTileRect(layer, 22, 1, 4, 32, "path");
-  fillTileRect(layer, 3, 3, 17, 11, "patio-floor");
-  fillTileRect(layer, 27, 3, 18, 11, "development-floor");
-  fillTileRect(layer, 3, 20, 17, 11, "library-floor");
-  fillTileRect(layer, 27, 20, 18, 11, "administration-floor");
-
-  for (const [column, row] of [
-    [2, 16],
-    [6, 17],
-    [19, 16],
-    [28, 17],
-    [42, 16],
-    [23, 4],
-    [24, 28],
-    [46, 7],
-  ] as const) {
-    setTile(layer, column, row, "grass-flowers");
-  }
-}
-
-function paintStructures(layer: CampusTileId[]): void {
-  outlineTileRect(layer, 0, 0, CAMPUS_COLUMNS, CAMPUS_ROWS, "wall-light");
-
-  outlineTileRect(layer, 26, 2, 20, 13, "wall-tech");
-  setTile(layer, 35, 14, "door");
-  setTile(layer, 36, 14, "door");
-  setTile(layer, 29, 14, "window");
-  setTile(layer, 42, 14, "window");
-  setTile(layer, 26, 2, "roof");
-  setTile(layer, 45, 2, "roof");
-
-  outlineTileRect(layer, 2, 19, 19, 13, "wall-library");
-  setTile(layer, 10, 19, "door");
-  setTile(layer, 11, 19, "door");
-  setTile(layer, 5, 19, "window");
-  setTile(layer, 17, 19, "window");
-  setTile(layer, 2, 19, "roof");
-  setTile(layer, 20, 19, "roof");
-
-  outlineTileRect(layer, 26, 19, 20, 13, "wall-administration");
-  setTile(layer, 35, 19, "door");
-  setTile(layer, 36, 19, "door");
-  setTile(layer, 29, 19, "window");
-  setTile(layer, 42, 19, "window");
-  setTile(layer, 26, 19, "roof");
-  setTile(layer, 45, 19, "roof");
-}
-
-function paintDecorations(layer: CampusTileId[]): void {
-  fillTileRect(layer, 11, 7, 2, 2, "fountain");
-  setTile(layer, 6, 10, "bench");
-  setTile(layer, 17, 10, "bench");
-  setTile(layer, 5, 5, "tree");
-  setTile(layer, 17, 5, "tree");
-  setTile(layer, 4, 12, "shrub");
-  setTile(layer, 18, 12, "shrub");
-  setTile(layer, 8, 5, "flowers");
-  setTile(layer, 15, 12, "flowers");
-  setTile(layer, 3, 14, "sign");
-  setTile(layer, 15, 5, "computer");
-
-  for (const row of [5, 8, 11]) {
-    for (const column of [29, 32, 39, 42]) {
-      setTile(layer, column, row, "computer");
-      setTile(layer, column, row + 1, "chair");
-    }
-  }
-
-  for (const row of [22, 25, 28]) {
-    for (let column = 5; column <= 17; column += 1) {
-      if (column !== 10 && column !== 11) {
-        setTile(layer, column, row, "bookshelf");
-      }
-    }
-  }
-  setTile(layer, 4, 29, "desk");
-  setTile(layer, 18, 29, "desk");
-
-  fillTileRect(layer, 32, 25, 8, 1, "admin-desk");
-  for (const column of [33, 35, 37, 39]) {
-    setTile(layer, column, 27, "chair");
-  }
-  setTile(layer, 28, 22, "shrub");
-  setTile(layer, 43, 22, "shrub");
-  setTile(layer, 35, 22, "sign");
-
-  for (const [column, row] of [
-    [2, 6],
-    [21, 5],
-    [22, 8],
-    [25, 11],
-    [46, 12],
-    [22, 22],
-    [25, 27],
-    [46, 28],
-  ] as const) {
-    setTile(layer, column, row, "tree");
-  }
-}
-
-function createLayer(fill: CampusTileId): CampusTileId[] {
-  return Array.from({ length: CAMPUS_COLUMNS * CAMPUS_ROWS }, () => fill);
-}
-
-function fillTileRect(
-  layer: CampusTileId[],
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  tileId: CampusTileId,
-): void {
-  for (let row = y; row < y + height; row += 1) {
-    for (let column = x; column < x + width; column += 1) {
-      setTile(layer, column, row, tileId);
-    }
-  }
-}
-
-function outlineTileRect(
-  layer: CampusTileId[],
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  tileId: CampusTileId,
-): void {
-  fillTileRect(layer, x, y, width, 1, tileId);
-  fillTileRect(layer, x, y + height - 1, width, 1, tileId);
-  fillTileRect(layer, x, y, 1, height, tileId);
-  fillTileRect(layer, x + width - 1, y, 1, height, tileId);
-}
-
-function setTile(layer: CampusTileId[], column: number, row: number, tileId: CampusTileId): void {
-  if (!isTileCoordinateInsideDimensions(column, row, CAMPUS_COLUMNS, CAMPUS_ROWS)) {
-    throw new RangeError(`Tile fora do mapa: ${column},${row}`);
-  }
-
-  layer[row * CAMPUS_COLUMNS + column] = tileId;
-}
-
-function createZone(
-  id: CampusZoneId,
-  label: string,
-  acousticMode: AcousticMode,
-  column: number,
-  row: number,
-  width: number,
-  height: number,
-): CampusZone {
-  return Object.freeze({
-    id,
-    label,
-    acousticMode,
-    rect: Object.freeze({
-      x: column * TILE_SIZE,
-      y: row * TILE_SIZE,
-      width: width * TILE_SIZE,
-      height: height * TILE_SIZE,
-    }),
-  });
-}
-
-function feetAtTile(column: number, row: number): Readonly<Vector2> {
-  return Object.freeze({
-    x: (column + 0.5) * TILE_SIZE,
-    y: (row + 0.75) * TILE_SIZE,
-  });
-}
-
-function createFocusDesk(
-  id: string,
-  label: string,
-  computerColumn: number,
-  computerRow: number,
-): Readonly<FocusDeskDefinition> {
-  return Object.freeze({
-    id,
-    kind: "focus_desk",
-    label,
-    interactionPosition: feetAtTile(computerColumn, computerRow + 1),
-    interactionRadius: TILE_SIZE * 1.75,
-    priority: 100,
-    seatPosition: feetAtTile(computerColumn, computerRow + 1),
-    exitPosition: feetAtTile(computerColumn + 1, computerRow + 1),
-    facing: "up",
-  });
-}
-
-function createScreenStation(
-  id: string,
-  label: string,
-  computerColumn: number,
-  computerRow: number,
-): Readonly<ScreenStationDefinition> {
-  return Object.freeze({
-    id,
-    kind: "screen_station",
-    label,
-    interactionPosition: feetAtTile(computerColumn, computerRow + 1),
-    interactionRadius: TILE_SIZE * 2,
-    audienceRadius: TILE_SIZE * 5,
-    priority: 140,
-  });
-}
+// End of validation and map update functions
 
 function deriveObstacles(map: CampusMapDefinition): readonly Rect[] {
   const obstacles: Rect[] = [];

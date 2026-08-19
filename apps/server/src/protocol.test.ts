@@ -349,6 +349,7 @@ function playerAt(sessionId: string, x: number, y: number): PlayerSnapshot {
     moving: false,
     focusMode: false,
     focusDeskId: null,
+    role: "member",
     sequence: 0,
   };
 }

@@ -6,6 +6,9 @@ export type CampusZoneId = (typeof CAMPUS_ZONE_IDS)[number];
 export const ACOUSTIC_MODES = ["open", "private"] as const;
 export type AcousticMode = (typeof ACOUSTIC_MODES)[number];
 
+export const PLAYER_ROLES = ["member", "admin"] as const;
+export type PlayerRole = (typeof PLAYER_ROLES)[number];
+
 export const PLAYER_COLORS = [
   "#2f7d5c",
   "#ca5a38",
@@ -42,6 +45,7 @@ export type PlayerSnapshot = {
   name: string;
   color: PlayerColor;
   appearance: AvatarAppearance;
+  role: PlayerRole;
   x: number;
   y: number;
   facing: Direction;
@@ -59,6 +63,8 @@ export const INTERACTION_ACTION_IDS = [
   "leave_focus",
   "start_screen_share",
   "stop_screen_share",
+  "open_whiteboard",
+  "close_whiteboard",
 ] as const;
 export type InteractionActionId = (typeof INTERACTION_ACTION_IDS)[number];
 
@@ -81,6 +87,15 @@ export type InteractionRequest = {
 
 export type InteractionResult = InteractionRequest & {
   outcome: InteractionOutcome;
+};
+
+export type AuthRequest = {
+  adminKey: string;
+};
+
+export type AuthResult = {
+  granted: boolean;
+  role: PlayerRole;
 };
 
 export type ProximityBand = "close" | "nearby";
@@ -163,6 +178,34 @@ export type ClientMessage =
   | {
       type: "interact";
       payload: InteractionRequest;
+    }
+  | {
+      type: "auth";
+      payload: AuthRequest;
+    }
+  | {
+      type: "publish_map_request";
+      payload: unknown;
+    }
+  | {
+      type: "chat_request";
+      payload: { message: string };
+    }
+  | {
+      type: "whiteboard_draw_request";
+      payload: {
+        interactableId: string;
+        x0: number;
+        y0: number;
+        x1: number;
+        y1: number;
+        color: string;
+        width: number;
+      };
+    }
+  | {
+      type: "emoji_reaction_request";
+      payload: { emoji: string };
     };
 
 export type ServerMessage =
@@ -186,6 +229,47 @@ export type ServerMessage =
   | {
       type: "interaction_result";
       result: InteractionResult;
+    }
+  | {
+      type: "auth_result";
+      result: AuthResult;
+    }
+  | {
+      type: "map_update";
+      map: unknown;
+    }
+  | {
+      type: "chat_broadcast";
+      sessionId: string;
+      message: string;
+    }
+  | {
+      type: "whiteboard_draw_broadcast";
+      sessionId: string;
+      interactableId: string;
+      x0: number;
+      y0: number;
+      x1: number;
+      y1: number;
+      color: string;
+      width: number;
+    }
+  | {
+      type: "whiteboard_sync";
+      interactableId: string;
+      lines: Array<{
+        x0: number;
+        y0: number;
+        x1: number;
+        y1: number;
+        color: string;
+        width: number;
+      }>;
+    }
+  | {
+      type: "emoji_reaction_broadcast";
+      sessionId: string;
+      emoji: string;
     };
 
 export function createIdleInput(sequence = 0): MovementInput {
@@ -240,4 +324,17 @@ export function isInteractionActionId(value: unknown): value is InteractionActio
 
 export function isInteractionOutcome(value: unknown): value is InteractionOutcome {
   return typeof value === "string" && INTERACTION_OUTCOMES.some((outcome) => outcome === value);
+}
+
+export function isPlayerRole(value: unknown): value is PlayerRole {
+  return typeof value === "string" && PLAYER_ROLES.some((role) => role === value);
+}
+
+export function sanitizeAdminKey(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length >= 4 && trimmed.length <= 256 ? trimmed : null;
 }

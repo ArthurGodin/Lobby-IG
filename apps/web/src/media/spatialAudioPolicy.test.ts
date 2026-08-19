@@ -59,6 +59,7 @@ function player(sessionId: string, x: number): PlayerSnapshot {
     moving: false,
     focusMode: false,
     focusDeskId: null,
+    role: "member",
     sequence: 0,
     x,
     y: 100,

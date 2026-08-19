@@ -127,7 +127,28 @@ const INTERACTION_HANDLERS: Record<WorldInteractableKind, InteractionHandler> = 
     actions: ["start_screen_share", "stop_screen_share"],
     execute: executeScreenStationAction,
   },
+  whiteboard: {
+    actions: ["open_whiteboard", "close_whiteboard"],
+    execute: executeWhiteboardAction,
+  },
 };
+
+function executeWhiteboardAction(
+  context: InteractionContext,
+  whiteboard: WorldInteractableDefinition,
+  _actionId: InteractionActionId,
+): InteractionResult["outcome"] {
+  if (whiteboard.kind !== "whiteboard") {
+    return "invalid_target";
+  }
+
+  const distance = getDistance(context.session.player, whiteboard.interactionPosition);
+  if (distance > whiteboard.interactionRadius) {
+    return "too_far";
+  }
+
+  return "succeeded";
+}
 
 function executeFocusDeskAction(
   context: InteractionContext,

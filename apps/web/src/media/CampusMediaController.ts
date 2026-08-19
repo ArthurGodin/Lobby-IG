@@ -124,7 +124,10 @@ export class CampusMediaController {
       this.mediaConnected = false;
       room.removeAllListeners();
       await room.disconnect();
-      console.warn("Não foi possível conectar o áudio local.", error);
+      console.warn(
+        `Não foi possível conectar o áudio local (${access.serverUrl}). Verifique se o LiveKit está rodando: pnpm media:up`,
+        error,
+      );
       this.setState({ status: "error", playbackBlocked: false });
     }
   }

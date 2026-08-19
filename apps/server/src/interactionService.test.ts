@@ -134,6 +134,7 @@ function sessionAt(sessionId: string, x: number, y: number): InteractionSession 
     moving: false,
     focusMode: false,
     focusDeskId: null,
+    role: "member",
     sequence: 0,
   };
 

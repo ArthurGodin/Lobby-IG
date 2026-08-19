@@ -51,7 +51,7 @@ export function mediaStatusLabel(
     case "privacy-error":
       return "Privacidade do áudio indisponível";
     case "error":
-      return "Erro no áudio";
+      return "Servidor de mídia inacessível";
     default:
       return "Áudio indisponível";
   }

@@ -7,8 +7,18 @@ import type {
   ProximitySnapshot,
   ScreenShareSnapshot,
 } from "@ig-campus/contracts";
-import { isPlayerColor, pickPlayerColor, sanitizeDisplayName } from "@ig-campus/contracts";
-import { PROXIMITY_RADIUS } from "@ig-campus/game-core";
+import {
+  isPlayerColor,
+  PLAYER_COLORS,
+  pickPlayerColor,
+  sanitizeDisplayName,
+} from "@ig-campus/contracts";
+import {
+  CAMPUS_MAP,
+  type CampusMapDefinition,
+  type CampusTileId,
+  PROXIMITY_RADIUS,
+} from "@ig-campus/game-core";
 import {
   AudioLines,
   ChevronRight,
@@ -17,18 +27,27 @@ import {
   LocateFixed,
   LockKeyhole,
   Map as MapIcon,
+  MessageCircle,
+  MessageSquareText,
   Mic,
   MicOff,
   MonitorUp,
   RadioTower,
   RefreshCw,
+  Settings,
+  Shield,
+  Smile,
+  Terminal,
   UsersRound,
   Volume2,
+  Wrench,
+  X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import type Phaser from "phaser";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CampusScene } from "../game/CampusScene";
-import { createCampusGame } from "../game/createCampusGame";
+import type { CampusScene } from "../game/CampusScene";
 import { bindMovementKeys, type MovementKeyBinding } from "../game/input";
 import {
   buildInteractionOptions,
@@ -38,14 +57,44 @@ import {
   getInteractionResultMessage,
   type InteractionOption,
 } from "../interactions/interactionState";
-import { getCampusServerUrl, joinCampus, sendMovement } from "../lib/campusClient";
+import { fetchCampusMap, getCampusServerUrl, joinCampus, sendMovement } from "../lib/campusClient";
 import { canStartScreenShare, canToggleMicrophone, mediaStatusLabel } from "../media/mediaState";
 import { useCampusMedia } from "./useCampusMedia";
+import { ServerDashboardPanel, type ServerLog } from "./ServerDashboardPanel";
+import { WhiteboardModal } from "./WhiteboardModal";
+import { WorldBuilderPanel } from "./WorldBuilderPanel";
 
 type ConnectionState = "connecting" | "connected" | "offline" | "error";
 
+import { WelcomeScreen } from "./WelcomeScreen";
+
 const STORAGE_KEY = "ig-campus-profile";
 const PANEL_UPDATE_INTERVAL_MS = 250;
+const MAX_CHAT_HISTORY = 100;
+
+type ChatEntry = {
+  id: string;
+  sessionId: string;
+  name: string;
+  message: string;
+  timestamp: number;
+};
+
+export const UI_PLAYER_COLORS: Array<{
+  id: PlayerColor;
+  label: string;
+  hex: string;
+  filter: string;
+}> = [
+  { id: "#2f7d5c", label: "Verde Menta", hex: "#10b981", filter: "hue-rotate(0deg)" },
+  { id: "#ca5a38", label: "Vermelho Coral", hex: "#ef4444", filter: "hue-rotate(290deg)" },
+  { id: "#4f6fb0", label: "Azul Oceano", hex: "#3b82f6", filter: "hue-rotate(180deg)" },
+  { id: "#c89b30", label: "Amarelo Sol", hex: "#eab308", filter: "hue-rotate(70deg)" },
+  { id: "#7a5aa6", label: "Roxo Ametista", hex: "#8b5cf6", filter: "hue-rotate(240deg)" },
+  { id: "#2f8f9d", label: "Verde Água", hex: "#14b8a6", filter: "hue-rotate(140deg)" },
+];
+
+const EMOJI_PALETTE = ["👍", "❤️", "😂", "🎉", "🔥", "👏", "💡", "🚀", "✅", "👀", "🤔", "⚡"];
 
 type LocalProfile = {
   name: string;
@@ -82,8 +131,13 @@ export function CampusApp() {
     peers: [],
   });
   const [selfSessionId, setSelfSessionId] = useState<string | null>(null);
+  const [isJoined, setIsJoined] = useState(false);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [overviewEnabled, setOverviewEnabled] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [authError, setAuthError] = useState(false);
+  const [adminKeyDraft, setAdminKeyDraft] = useState("");
   const [acousticEnvironment, setAcousticEnvironment] =
     useState<AcousticEnvironmentSnapshot | null>(null);
   const [acousticAnnouncement, setAcousticAnnouncement] = useState("");
@@ -93,6 +147,31 @@ export function CampusApp() {
   const [pendingInteraction, setPendingInteraction] = useState<InteractionRequest | null>(null);
   const [screenShare, setScreenShare] = useState<ScreenShareSnapshot | null>(null);
   const [screenShareViewerDismissed, setScreenShareViewerDismissed] = useState(false);
+
+  // World Builder State
+  const [worldBuilderOpen, setWorldBuilderOpen] = useState(false);
+  const [serverDashboardOpen, setServerDashboardOpen] = useState(false);
+  const [serverLogs, setServerLogs] = useState<ServerLog[]>([]);
+  const [wbActiveLayer, setWbActiveLayer] = useState<
+    "ground" | "structures" | "decorations" | "zones" | "spawns" | "interactables"
+  >("structures");
+  const [wbActiveTile, setWbActiveTile] = useState<CampusTileId | null>("wall-tech");
+  const [wbActiveTool, setWbActiveTool] = useState<"pencil" | "rect" | "fill">("pencil");
+  const [wbShowGrid, setWbShowGrid] = useState(true);
+
+  // Chat State
+  const [chatDraft, setChatDraft] = useState("");
+  const chatInputRef = useRef<HTMLInputElement>(null);
+
+  // Whiteboard State
+  const [activeWhiteboardId, setActiveWhiteboardId] = useState<string | null>(null);
+
+  // Chat History & Emoji State
+  const [chatHistory, setChatHistory] = useState<ChatEntry[]>([]);
+  const [chatPanelOpen, setChatPanelOpen] = useState(false);
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const chatHistoryEndRef = useRef<HTMLDivElement>(null);
+
   const campusMedia = useCampusMedia();
 
   const updateAcousticEnvironment = useCallback(
@@ -187,6 +266,8 @@ export function CampusApp() {
     setPendingInteraction(null);
     setScreenShare(null);
     setScreenShareViewerDismissed(false);
+    setAuthModalOpen(false);
+    setAdminKeyDraft("");
     updateAcousticEnvironment(null);
     await campusMedia.disconnect();
 
@@ -203,6 +284,7 @@ export function CampusApp() {
     lastPanelUpdateAtRef.current = 0;
 
     try {
+      await fetchCampusMap();
       const room = await joinCampus(profileRef.current, abortController.signal);
 
       if (abortController.signal.aborted) {
@@ -217,6 +299,12 @@ export function CampusApp() {
       scene?.setSelfSessionId(room.sessionId);
       scene?.setOverview(overviewEnabledRef.current);
       void campusMedia.connect(room.media);
+
+      const savedKey = localStorage.getItem("campus_admin_key");
+      if (savedKey) {
+        localStorage.setItem("campus_admin_key_temp", savedKey);
+        room.authenticate(savedKey);
+      }
 
       room.onStateChange((state) => {
         const nextPlayers = [...state.players].sort((a, b) => a.name.localeCompare(b.name));
@@ -264,6 +352,68 @@ export function CampusApp() {
         if (result.outcome === "succeeded" && result.actionId === "stop_screen_share") {
           void campusMedia.stopScreenShare();
         }
+        if (result.outcome === "succeeded" && result.actionId === "open_whiteboard") {
+          setActiveWhiteboardId(result.interactableId);
+        }
+      });
+
+      room.onAuthResult((result) => {
+        setIsAuthenticating(false);
+        if (result.granted) {
+          setAuthModalOpen(false);
+          setAdminKeyDraft("");
+          setAuthError(false);
+          // O adminKeyDraft pode estar vazio se foi auto-login, então pegamos do ref
+          const savedKey = localStorage.getItem("campus_admin_key_temp");
+          if (savedKey) {
+            localStorage.setItem("campus_admin_key", savedKey);
+            localStorage.removeItem("campus_admin_key_temp");
+          }
+        } else {
+          setAuthError(true);
+          localStorage.removeItem("campus_admin_key");
+        }
+      });
+
+      room.onMapUpdate(() => {
+        // eslint-disable-next-line no-alert
+        alert("O mapa foi atualizado pelo administrador. O campus será recarregado.");
+        window.location.reload();
+      });
+
+      room.onChat((sessionId, message) => {
+        if (sessionId === "system-webhook") {
+          setServerLogs((prev) =>
+            [
+              {
+                id: Date.now().toString() + Math.random(),
+                timestamp: Date.now(),
+                message,
+                source: "Webhook",
+              },
+              ...prev,
+            ].slice(0, 50),
+          );
+        }
+        getCampusScene(gameRef.current)?.showSpeechBubble(sessionId, message);
+        const senderPlayer = latestSceneStateRef.current?.players.find(
+          (p) => p.sessionId === sessionId,
+        );
+        setChatHistory((prev) => {
+          const entry: ChatEntry = {
+            id: `${Date.now()}-${sessionId}`,
+            sessionId,
+            name: senderPlayer?.name ?? "???",
+            message,
+            timestamp: Date.now(),
+          };
+          const next = [...prev, entry];
+          return next.length > MAX_CHAT_HISTORY ? next.slice(-MAX_CHAT_HISTORY) : next;
+        });
+      });
+
+      room.onEmojiReaction((sessionId, emoji) => {
+        getCampusScene(gameRef.current)?.showEmojiReaction(sessionId, emoji);
       });
 
       room.onLeave(() => {
@@ -285,6 +435,8 @@ export function CampusApp() {
         setPendingInteraction(null);
         setScreenShare(null);
         setScreenShareViewerDismissed(false);
+        setAuthModalOpen(false);
+        setAdminKeyDraft("");
         updateAcousticEnvironment(null);
         const scene = getCampusScene(gameRef.current);
         scene?.setSelfSessionId(null);
@@ -326,20 +478,28 @@ export function CampusApp() {
       return;
     }
 
-    gameRef.current = createCampusGame(gameHostRef.current, (scene) => {
-      scene.setSelfSessionId(roomRef.current?.sessionId ?? null);
-      scene.setOverview(overviewEnabledRef.current);
-      scene.setSpeakingIdentities(speakingIdentitiesRef.current);
-
-      const latestState = latestSceneStateRef.current;
-
-      if (latestState) {
-        scene.syncPlayers(latestState.players, latestState.proximity);
-        scene.setScreenShare(latestState.screenShare);
+    let isMounted = true;
+    void import("../game/createCampusGame").then(({ createCampusGame }) => {
+      if (!isMounted || !gameHostRef.current || gameRef.current) {
+        return;
       }
+
+      gameRef.current = createCampusGame(gameHostRef.current, (scene) => {
+        scene.setSelfSessionId(roomRef.current?.sessionId ?? null);
+        scene.setOverview(overviewEnabledRef.current);
+        scene.setSpeakingIdentities(speakingIdentitiesRef.current);
+
+        const latestState = latestSceneStateRef.current;
+
+        if (latestState) {
+          scene.syncPlayers(latestState.players, latestState.proximity);
+          scene.setScreenShare(latestState.screenShare);
+        }
+      });
     });
 
     return () => {
+      isMounted = false;
       gameRef.current?.destroy(true);
       gameRef.current = null;
     };
@@ -414,6 +574,7 @@ export function CampusApp() {
   ]);
 
   useEffect(() => {
+    if (!isJoined) return;
     void connect();
 
     return () => {
@@ -423,7 +584,23 @@ export function CampusApp() {
       roomRef.current = null;
       void campusMedia.disconnect();
     };
-  }, [campusMedia.disconnect, connect]);
+  }, [campusMedia.disconnect, connect, isJoined]);
+
+  useEffect(() => {
+    const scene = getCampusScene(gameRef.current);
+    if (scene) {
+      if (worldBuilderOpen && !scene.getDraftMap()) {
+        scene.initDraftMap();
+      }
+      scene.setBuilderState({
+        open: worldBuilderOpen,
+        layer: wbActiveLayer,
+        tile: wbActiveTile,
+        tool: wbActiveTool,
+        showGrid: wbShowGrid,
+      });
+    }
+  }, [worldBuilderOpen, wbActiveLayer, wbActiveTile, wbActiveTool, wbShowGrid]);
 
   useEffect(() => {
     const binding = bindMovementKeys(
@@ -467,8 +644,63 @@ export function CampusApp() {
     return () => window.removeEventListener("keydown", handleEscape);
   }, [interactionSelectorOpen, overviewEnabled, self]);
 
-  const handleNameCommit = () => {
-    const name = sanitizeDisplayName(nameDraft);
+  useEffect(() => {
+    const handleEnter = (event: KeyboardEvent) => {
+      if (event.key === "Enter" && !interactionSelectorOpen) {
+        if (document.activeElement === chatInputRef.current) {
+          if (chatDraft.trim().length > 0) {
+            roomRef.current?.sendChat(chatDraft.trim());
+            setChatDraft("");
+          }
+          chatInputRef.current?.blur();
+          getCampusScene(gameRef.current)?.game.canvas.focus();
+        } else if (!isEditableTarget(event.target)) {
+          chatInputRef.current?.focus();
+          event.preventDefault();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleEnter);
+    return () => window.removeEventListener("keydown", handleEnter);
+  }, [interactionSelectorOpen, chatDraft]);
+
+  useEffect(() => {
+    if (chatPanelOpen && chatHistoryEndRef.current) {
+      chatHistoryEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [chatPanelOpen]);
+
+  useEffect(() => {
+    if (self?.role === "admin" && authModalOpen) {
+      setAuthModalOpen(false);
+      setAdminKeyDraft("");
+      setWorldBuilderOpen(true);
+    }
+  }, [self?.role, authModalOpen]);
+
+  const handleAuthenticate = () => {
+    if (isAuthenticating || !adminKeyDraft.trim()) return;
+    setIsAuthenticating(true);
+    setAuthError(false);
+    localStorage.setItem("campus_admin_key_temp", adminKeyDraft);
+    roomRef.current?.authenticate(adminKeyDraft);
+
+    // Safety timeout
+    setTimeout(() => {
+      setIsAuthenticating((current) => {
+        if (current) {
+          setAuthError(true);
+          return false;
+        }
+        return current;
+      });
+    }, 3000);
+  };
+
+  const handleNameCommit = (newName?: string) => {
+    const nameToCommit = newName !== undefined ? newName : nameDraft;
+    const name = sanitizeDisplayName(nameToCommit);
     const nextProfile = {
       ...profile,
       name,
@@ -477,8 +709,28 @@ export function CampusApp() {
     persistProfile(nextProfile);
     profileRef.current = nextProfile;
     setProfile(nextProfile);
-    setNameDraft(name);
-    roomRef.current?.updateProfile(nextProfile);
+    if (newName === undefined) {
+      setNameDraft(name);
+    }
+    roomRef.current?.updateProfile({
+      ...nextProfile,
+      appearance: { outfitColor: nextProfile.color },
+    });
+  };
+
+  const handleColorCommit = (color: PlayerColor) => {
+    const nextProfile = {
+      ...profile,
+      color,
+    };
+
+    persistProfile(nextProfile);
+    profileRef.current = nextProfile;
+    setProfile(nextProfile);
+    roomRef.current?.updateProfile({
+      ...nextProfile,
+      appearance: { outfitColor: color },
+    });
   };
 
   const handleReconnect = () => {
@@ -496,6 +748,8 @@ export function CampusApp() {
     setPendingInteraction(null);
     setScreenShare(null);
     setScreenShareViewerDismissed(false);
+    setAuthModalOpen(false);
+    setAdminKeyDraft("");
     updateAcousticEnvironment(null);
     void connect();
   };
@@ -578,6 +832,17 @@ export function CampusApp() {
         if (key === "e") {
           event.preventDefault();
           handleInteractionTrigger();
+          return;
+        }
+
+        const num = Number.parseInt(key, 10);
+        if (!Number.isNaN(num) && num >= 1 && num <= 9) {
+          event.preventDefault();
+          const emoji = EMOJI_PALETTE[num - 1];
+          if (emoji && roomRef.current) {
+            roomRef.current.sendEmojiReaction(emoji);
+          }
+          return;
         }
         return;
       }
@@ -680,6 +945,20 @@ export function CampusApp() {
     return () => window.clearTimeout(timer);
   }, [pendingInteraction]);
 
+  if (!isJoined) {
+    return (
+      <WelcomeScreen
+        initialName={profile.name}
+        initialColor={profile.color}
+        onJoin={(name, color) => {
+          handleNameCommit(name);
+          handleColorCommit(color);
+          setIsJoined(true);
+        }}
+      />
+    );
+  }
+
   return (
     <main className="campus-shell">
       <header className="campus-topbar">
@@ -720,6 +999,86 @@ export function CampusApp() {
       <section className="campus-workspace">
         <section aria-label={getMapDescription(self, proximity)} className="map-frame">
           <div ref={gameHostRef} className="game-host" />
+          <div className="chat-bar">
+            <button
+              type="button"
+              onClick={() => setChatPanelOpen((v) => !v)}
+              title="Histórico de mensagens"
+              className={`chat-bar__toggle${chatPanelOpen ? " chat-bar__toggle--active" : ""}`}
+            >
+              <MessageSquareText size={18} />
+            </button>
+            <input
+              ref={chatInputRef}
+              type="text"
+              placeholder="Digite para falar no mundo..."
+              value={chatDraft}
+              onChange={(e) => setChatDraft(e.target.value)}
+              className="chat-bar__input"
+            />
+            <div style={{ position: "relative" }}>
+              <button
+                type="button"
+                onClick={() => setEmojiPickerOpen((v) => !v)}
+                title="Emoji rápido"
+                className={`chat-bar__emoji-btn${emojiPickerOpen ? " chat-bar__emoji-btn--active" : ""}`}
+              >
+                😊
+              </button>
+              {emojiPickerOpen ? (
+                <div className="emoji-picker">
+                  {EMOJI_PALETTE.map((emoji, index) => (
+                    <div key={emoji} style={{ position: "relative", display: "inline-block" }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          roomRef.current?.sendEmojiReaction(emoji);
+                          setEmojiPickerOpen(false);
+                        }}
+                        className="emoji-picker__btn"
+                        title={index < 9 ? `Atalho: ${index + 1}` : undefined}
+                      >
+                        {emoji}
+                      </button>
+                      {index < 9 && <span className="emoji-picker__shortcut">{index + 1}</span>}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            <div className="chat-bar__enter-hint">ENTER</div>
+          </div>
+          {chatPanelOpen ? (
+            <div className="chat-history-panel">
+              <div className="chat-history-panel__header">
+                <span>Histórico de Mensagens</span>
+                <span className="chat-history-panel__count">{chatHistory.length} msg</span>
+              </div>
+              <div className="chat-history-panel__content">
+                {chatHistory.length === 0 ? (
+                  <p className="chat-history-panel__empty">Nenhuma mensagem ainda.</p>
+                ) : (
+                  chatHistory.map((entry) => (
+                    <div key={entry.id} className="chat-history-entry">
+                      <span
+                        className={`chat-history-entry__name${entry.sessionId === selfSessionId ? " chat-history-entry__name--self" : ""}`}
+                      >
+                        {entry.name}
+                      </span>
+                      <span className="chat-history-entry__message">{entry.message}</span>
+                      <span className="chat-history-entry__time">
+                        {new Date(entry.timestamp).toLocaleTimeString("pt-BR", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
+                  ))
+                )}
+                <div ref={chatHistoryEndRef} />
+              </div>
+            </div>
+          ) : null}
           {overviewEnabled ? (
             <div className="map-mode-indicator">
               <MapIcon aria-hidden="true" size={14} />
@@ -848,10 +1207,32 @@ export function CampusApp() {
         </p>
 
         <aside className="campus-panel" aria-label="Painel do campus">
+          {self?.role === "admin" ? (
+            <button
+              type="button"
+              className="open-builder-btn"
+              onClick={() => setWorldBuilderOpen(!worldBuilderOpen)}
+            >
+              <Wrench size={14} /> {worldBuilderOpen ? "Fechar Construtor" : "World Builder"}
+            </button>
+          ) : null}
+          {self?.role === "admin" ? (
+            <button
+              type="button"
+              className="open-builder-btn open-builder-btn--secondary"
+              onClick={() => setServerDashboardOpen(!serverDashboardOpen)}
+            >
+              <Terminal size={14} /> {serverDashboardOpen ? "Fechar War Room" : "War Room"}
+            </button>
+          ) : null}
+
           <section className="identity-box">
             <div>
               <label className="section-kicker" htmlFor="display-name">
                 Sua presença
+                {self?.role === "admin" ? (
+                  <span className="identity-box__admin-badge">(Admin)</span>
+                ) : null}
               </label>
               <input
                 autoComplete="off"
@@ -861,7 +1242,7 @@ export function CampusApp() {
                 name="displayName"
                 spellCheck={false}
                 value={nameDraft}
-                onBlur={handleNameCommit}
+                onBlur={() => handleNameCommit()}
                 onChange={(event) => setNameDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
@@ -876,23 +1257,49 @@ export function CampusApp() {
               />
             </div>
 
-            <button
-              aria-describedby="media-status-description"
-              aria-label={microphoneActionLabel(campusMedia.state.status)}
-              aria-pressed={campusMedia.state.status === "active"}
-              className={`microphone-button microphone-button--${campusMedia.state.status}`}
-              disabled={!canToggleMicrophone(campusMedia.state.status)}
-              onClick={() => void campusMedia.toggleMicrophone()}
-              title={microphoneActionLabel(campusMedia.state.status)}
-              type="button"
-            >
-              {campusMedia.state.status === "active" ? (
-                <Mic aria-hidden="true" size={18} />
-              ) : (
-                <MicOff aria-hidden="true" size={18} />
-              )}
-              <span>{microphoneControlLabel(campusMedia.state.status)}</span>
-            </button>
+            <div className="color-picker-row">
+              {PLAYER_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  aria-label={`Selecionar cor ${c}`}
+                  title="Mudar cor do avatar"
+                  onClick={() => handleColorCommit(c)}
+                  className={`color-picker-btn${profile.color === c ? " color-picker-btn--selected" : ""}`}
+                  style={{ backgroundColor: c }}
+                />
+              ))}
+            </div>
+
+            <div className="identity-box__actions">
+              <button
+                aria-describedby="media-status-description"
+                aria-label={microphoneActionLabel(campusMedia.state.status)}
+                aria-pressed={campusMedia.state.status === "active"}
+                className={`microphone-button microphone-button--${campusMedia.state.status}`}
+                disabled={!canToggleMicrophone(campusMedia.state.status)}
+                onClick={() => void campusMedia.toggleMicrophone()}
+                title={microphoneActionLabel(campusMedia.state.status)}
+                type="button"
+              >
+                {campusMedia.state.status === "active" ? (
+                  <Mic aria-hidden="true" size={18} />
+                ) : (
+                  <MicOff aria-hidden="true" size={18} />
+                )}
+                <span>{microphoneControlLabel(campusMedia.state.status)}</span>
+              </button>
+              {self?.role !== "admin" ? (
+                <button
+                  type="button"
+                  onClick={() => setAuthModalOpen(true)}
+                  title="Autenticar como administrador"
+                  className="identity-box__auth-btn"
+                >
+                  <LockKeyhole aria-hidden="true" size={16} />
+                </button>
+              ) : null}
+            </div>
           </section>
 
           <section className={`media-card media-card--${campusMedia.state.status}`}>
@@ -1054,6 +1461,110 @@ export function CampusApp() {
           </button>
         </aside>
       </section>
+
+      {worldBuilderOpen && self?.role === "admin" ? (
+        <WorldBuilderPanel
+          activeLayer={wbActiveLayer}
+          setActiveLayer={setWbActiveLayer}
+          activeTile={wbActiveTile}
+          setActiveTile={setWbActiveTile}
+          activeTool={wbActiveTool}
+          setActiveTool={setWbActiveTool}
+          showGrid={wbShowGrid}
+          setShowGrid={setWbShowGrid}
+          onClose={() => setWorldBuilderOpen(false)}
+          onUndo={() => {
+            const scene = getCampusScene(gameRef.current);
+            scene?.undoDraft();
+          }}
+          onRedo={() => {
+            const scene = getCampusScene(gameRef.current);
+            scene?.redoDraft();
+          }}
+          onPublish={() => {
+            if (roomRef.current) {
+              const scene = getCampusScene(gameRef.current);
+              const draftMap = scene?.getDraftMap() ?? CAMPUS_MAP;
+              roomRef.current.publishMap(draftMap);
+              scene?.discardDraftMap(); // Clean up the local draft after successful publish
+            }
+          }}
+        />
+      ) : null}
+
+      {serverDashboardOpen && self?.role === "admin" ? (
+        <ServerDashboardPanel logs={serverLogs} onClose={() => setServerDashboardOpen(false)} />
+      ) : null}
+
+      {authModalOpen ? (
+        <div role="dialog" aria-modal="true" className="auth-modal-backdrop">
+          <div className={`auth-modal${authError ? " auth-modal--error" : ""}`}>
+            <h3 className="auth-modal__title">Acesso de Administrador</h3>
+            <p className="auth-modal__subtitle">
+              Insira a chave mestra para habilitar a edição do mapa.
+            </p>
+            <input
+              type="password"
+              placeholder="Chave secreta..."
+              value={adminKeyDraft}
+              onChange={(e) => {
+                setAdminKeyDraft(e.target.value);
+                setAuthError(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  handleAuthenticate();
+                } else if (e.key === "Escape") {
+                  setAuthModalOpen(false);
+                  setAdminKeyDraft("");
+                  setAuthError(false);
+                }
+              }}
+              className={`auth-modal__input${authError ? " auth-modal__input--error" : ""}`}
+              // biome-ignore lint/a11y/noAutofocus: The admin modal should capture focus immediately.
+              autoFocus
+            />
+
+            <div className="auth-modal__error-container">
+              {authError && (
+                <span className="auth-modal__error-message">Senha incorreta. Tente novamente.</span>
+              )}
+            </div>
+
+            <div className="auth-modal__actions">
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthModalOpen(false);
+                  setAdminKeyDraft("");
+                  setAuthError(false);
+                }}
+                disabled={isAuthenticating}
+                className="auth-modal__btn-cancel"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleAuthenticate}
+                disabled={!adminKeyDraft.trim() || isAuthenticating}
+                className="auth-modal__btn-submit"
+              >
+                {isAuthenticating ? "Verificando..." : "Autenticar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {activeWhiteboardId && roomRef.current ? (
+        <WhiteboardModal
+          connection={roomRef.current}
+          interactableId={activeWhiteboardId}
+          onClose={() => setActiveWhiteboardId(null)}
+        />
+      ) : null}
+
       <div aria-hidden="true" className="campus-audio-root" ref={campusMedia.audioRootRef} />
     </main>
   );
@@ -1113,7 +1624,7 @@ function mediaHelpText(status: Parameters<typeof canToggleMicrophone>[0]): strin
     case "reconnecting":
       return "O mapa continua disponível durante a conexão.";
     case "error":
-      return "O mapa continua funcionando. Confira o LiveKit local.";
+      return "Sem conexão com a mídia. Verifique se o Docker/LiveKit está rodando (pnpm media:up).";
     case "privacy-error":
       return "Seu microfone foi desligado para proteger a conversa.";
     default:
@@ -1154,7 +1665,7 @@ function getCampusScene(game: Phaser.Game | null): CampusScene | null {
   }
 
   const scene = game.scene.getScene("CampusScene");
-  return scene instanceof CampusScene ? scene : null;
+  return scene?.constructor?.name === "CampusScene" ? (scene as CampusScene) : null;
 }
 
 function loadProfile(): LocalProfile {
@@ -1190,18 +1701,18 @@ function persistProfile(profile: LocalProfile): void {
 
 function connectionLabel(state: ConnectionState): string {
   if (state === "connected") {
-    return "conectado";
+    return "Conectado ao Campus";
   }
 
   if (state === "connecting") {
-    return "conectando";
+    return "Conectando ao Campus...";
   }
 
   if (state === "offline") {
-    return "offline";
+    return "Desconectado";
   }
 
-  return "erro";
+  return "Falha na conexão do mapa";
 }
 
 function proximityLabel(peers: ProximityPeerSnapshot[]): string {

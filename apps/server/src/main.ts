@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { createCampusServer } from "./campusServer.js";
+import { createIdentityService } from "./identity.js";
 import { createMediaAccessProviderFromEnv } from "./mediaAccess.js";
 
 loadLocalEnvironment();
@@ -7,6 +8,7 @@ loadLocalEnvironment();
 const port = Number.parseInt(process.env.CAMPUS_SERVER_PORT ?? "2567", 10);
 const campusServer = createCampusServer({
   mediaAccessProvider: createMediaAccessProviderFromEnv(),
+  identityService: createIdentityService(),
 });
 
 const runningServer = await campusServer.listen(port);

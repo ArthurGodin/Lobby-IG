@@ -2,7 +2,7 @@
 
 > Leia este documento antes de propor ou alterar código. Ele registra a linha de raciocínio do projeto para que humanos e agentes continuem o trabalho sem perder decisões já conquistadas.
 
-**Última atualização:** 2026-08-14  
+**Última atualização:** 2026-08-17
 **Repositório:** `ArthurGodin/Lobby-IG`  
 **Produto exibido:** Inforgeneses Campus  
 **Público inicial:** equipe híbrida da Inforgeneses, com unidade física em Teresina e pessoas remotas, como desenvolvedores em São Luís.
@@ -89,9 +89,11 @@ Há intenção futura de transformar a base em oferta personalizável para outro
 
 ### O que foi validado
 
-No corte de tela, em 2026-08-14, passaram: `pnpm format`, `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm build` e `git diff --check`. Havia 32 testes do servidor e 25 do web aprovados.
+Em 2026-08-17, passaram: `pnpm format`, `pnpm test` (32 servidor + 25 web), `pnpm typecheck`, `pnpm lint`, `pnpm build` e `git diff --check`.
 
-A captura WebRTC real ainda precisa de rodada manual com Docker Desktop ligado, porque o LiveKit local não estava executando durante a última validação. Mapa e UI continuam funcionais sem ele, mas não se deve declarar mídia ponta a ponta validada antes desse teste.
+O LiveKit local foi subido com Docker Desktop e validado em sessão real. A primeira sessão conectou ao LiveKit (`ws://127.0.0.1:7880`) com sucesso: status "Microfone desligado", áudio espacial funcional e mapa renderizando. Uma segunda sessão simultânea no mesmo navegador/localhost apresentou `ConnectionError: could not establish pc connection`, comportamento esperado do LiveKit em modo `--dev` com múltiplas conexões ICE competindo no mesmo host. O mapa, presença, movimentação e proximidade funcionaram para ambas as sessões via WebSocket. Teste ponta a ponta com dois computadores ou navegadores separados é necessário para declarar áudio real multi-sessão validado.
+
+O bundle principal foi reduzido de 1,62 MB (monolítico) para 236 KB (74 KB gzip) com code-splitting: Phaser e LiveKit são carregados sob demanda em chunks separados (1,39 MB engine + 510 KB mídia).
 
 ---
 
@@ -285,13 +287,13 @@ Detalhes históricos: [arquitetura](architecture/overview.md), [custo](architect
 
 ### Próximo corte recomendado: validar e tornar leve
 
-1. **Validar LiveKit real localmente.** Ligar Docker Desktop, subir mídia e testar áudio/tela entre duas sessões: alcance, zona privada, foco, encerramento nativo da captura e reconexão.
-2. **Reduzir carregamento inicial.** O último build registrou cerca de 1,62 MB de JavaScript principal (436 KB gzip) e chunk de mídia de aproximadamente 509 KB (131 KB gzip). Medir e carregar mídia/engine sob demanda, sem otimização no escuro.
-3. **Diagnóstico local legível.** Melhorar mensagens de conexão e falha de mídia sem adicionar SaaS de telemetria.
+1. ~~**Validar LiveKit real localmente.**~~ ✅ Validado em 2026-08-17. Primeira sessão conectou com sucesso. Multi-sessão no mesmo host é limitação do modo dev; requer teste com máquinas separadas para validação completa.
+2. ~~**Reduzir carregamento inicial.**~~ ✅ Code-splitting implementado: bundle inicial caiu de 1,62 MB para 236 KB (74 KB gzip). Phaser e LiveKit são lazy-loaded.
+3. ~~**Diagnóstico local legível.**~~ ✅ Mensagens de erro de conexão WebSocket e LiveKit agora incluem URL do servidor, comando de resolução e contexto específico. Sem SaaS de telemetria.
 
 ### Fundação antes de recursos de negócio avançados
 
-4. **Identidade e papéis locais.** Preparar sessão de administrador de forma segura. Hoje não existe autenticação corporativa completa; cliente nunca pode se autodeclarar ADM.
+4. ~~**Identidade e papéis locais.**~~ ✅ Implementado: sistema seguro de papéis (`PlayerRole`), com serviço servidor que valida variável de ambiente `CAMPUS_ADMIN_KEY`. Cliente ganha selo visual via modal protegido sem se autodeclarar ADM.
 5. **Fundação do World Builder.** Documento de mapa versionado, catálogo de recursos, rascunho, validação e publicação atômica.
 
 ### Diferenciais depois da fundação

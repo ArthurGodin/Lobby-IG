@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import { fileURLToPath } from "node:url";
 import {
   type AcousticSnapshot,
   createIdleInput,
@@ -14,17 +16,21 @@ import {
 import {
   buildAcousticPolicy,
   buildScreenShareAccessPolicy,
+  CAMPUS_MAP,
+  type CampusMapDefinition,
   getAvailableSpawnPoint,
   getFacingDirection,
   getFocusBarriers,
   getProximityPeer,
   isMoving,
+  loadCampusMap,
   moveWithCollision,
   PROXIMITY_RADIUS,
   type ScreenShareReservation,
   SIMULATION_RATE,
 } from "@ig-campus/game-core";
 import { WebSocket, WebSocketServer } from "ws";
+import { createIdentityService, type IdentityService } from "./identity.js";
 import { createInteractionService } from "./interactionService.js";
 import { createUnavailableMediaAccessProvider, type MediaAccessProvider } from "./mediaAccess.js";
 import { parseClientMessage } from "./protocol.js";
@@ -52,14 +58,56 @@ export type CampusServer = {
 
 export type CampusServerOptions = {
   mediaAccessProvider?: MediaAccessProvider;
+  identityService?: IdentityService;
   spawnPointProvider?: (players: readonly PlayerSnapshot[]) => { x: number; y: number };
 };
 
 export function createCampusServer(options: CampusServerOptions = {}): CampusServer {
   const sessions = new Map<string, PlayerSession>();
+  const whiteboardsPath = fileURLToPath(
+    new URL("../../../packages/game-core/src/whiteboards.json", import.meta.url),
+  );
+
+  let initialWhiteboards: Array<
+    [
+      string,
+      Array<{ x0: number; y0: number; x1: number; y1: number; color: string; width: number }>,
+    ]
+  > = [];
+  if (existsSync(whiteboardsPath)) {
+    try {
+      initialWhiteboards = JSON.parse(readFileSync(whiteboardsPath, "utf8"));
+    } catch (e) {
+      console.warn("Falha ao carregar whiteboards.json", e);
+    }
+  }
+
+  const whiteboards = new Map<
+    string,
+    Array<{ x0: number; y0: number; x1: number; y1: number; color: string; width: number }>
+  >(initialWhiteboards);
+
+  let saveWhiteboardsTimeout: NodeJS.Timeout | null = null;
+  const scheduleWhiteboardsSave = () => {
+    if (!saveWhiteboardsTimeout) {
+      saveWhiteboardsTimeout = setTimeout(() => {
+        saveWhiteboardsTimeout = null;
+        try {
+          writeFileSync(
+            whiteboardsPath,
+            JSON.stringify([...whiteboards.entries()], null, 2),
+            "utf8",
+          );
+        } catch (e) {
+          console.error("Falha ao salvar whiteboards", e);
+        }
+      }, 5000);
+    }
+  };
   const mediaAccessProvider = options.mediaAccessProvider ?? createUnavailableMediaAccessProvider();
+  const identityService = options.identityService ?? createIdentityService();
   const interactionService = createInteractionService();
-  const httpServer = createHttpServer();
+  const httpServer = createHttpServer(sessions);
   const websocketServer = new WebSocketServer({
     server: httpServer,
     maxPayload: MAX_PAYLOAD_BYTES,
@@ -78,6 +126,7 @@ export function createCampusServer(options: CampusServerOptions = {}): CampusSer
       name: "Dev",
       color: pickPlayerColor(sessionId),
       appearance: { outfitColor: pickPlayerColor(sessionId) },
+      role: "member",
       x: spawnPoint.x,
       y: spawnPoint.y,
       facing: "down",
@@ -142,7 +191,125 @@ export function createCampusServer(options: CampusServerOptions = {}): CampusSer
         send(session.socket, { type: "interaction_result", result });
 
         if (result.outcome === "succeeded") {
+          if (message.payload.actionId === "open_whiteboard") {
+            const lines = whiteboards.get(message.payload.interactableId) ?? [];
+            send(session.socket, {
+              type: "whiteboard_sync",
+              interactableId: message.payload.interactableId,
+              lines,
+            });
+          }
           broadcastState();
+        }
+        return;
+      }
+
+      if (message.type === "whiteboard_draw_request") {
+        const lines = whiteboards.get(message.payload.interactableId) ?? [];
+        lines.push({
+          x0: message.payload.x0,
+          y0: message.payload.y0,
+          x1: message.payload.x1,
+          y1: message.payload.y1,
+          color: message.payload.color,
+          width: message.payload.width,
+        });
+
+        // Prevent memory leak
+        if (lines.length > 5000) {
+          lines.splice(0, lines.length - 5000);
+        }
+        whiteboards.set(message.payload.interactableId, lines);
+        scheduleWhiteboardsSave();
+
+        const broadcastMsg = {
+          type: "whiteboard_draw_broadcast",
+          sessionId: session.player.sessionId,
+          interactableId: message.payload.interactableId,
+          x0: message.payload.x0,
+          y0: message.payload.y0,
+          x1: message.payload.x1,
+          y1: message.payload.y1,
+          color: message.payload.color,
+          width: message.payload.width,
+        } as const;
+
+        for (const s of sessions.values()) {
+          send(s.socket, broadcastMsg);
+        }
+        return;
+      }
+
+      if (message.type === "chat_request") {
+        if (message.payload.message.trim().length > 0) {
+          const broadcastMsg = {
+            type: "chat_broadcast",
+            sessionId: session.player.sessionId,
+            message: message.payload.message.trim(),
+          } as const;
+
+          for (const s of sessions.values()) {
+            send(s.socket, broadcastMsg);
+          }
+        }
+        return;
+      }
+
+      if (message.type === "emoji_reaction_request") {
+        const broadcastMsg = {
+          type: "emoji_reaction_broadcast",
+          sessionId: session.player.sessionId,
+          emoji: message.payload.emoji,
+        } as const;
+
+        for (const s of sessions.values()) {
+          send(s.socket, broadcastMsg);
+        }
+        return;
+      }
+
+      if (message.type === "auth") {
+        const granted = identityService.validateAdminKey(message.payload.adminKey);
+
+        if (granted) {
+          session.player.role = "admin";
+        }
+
+        send(session.socket, {
+          type: "auth_result",
+          result: { granted, role: session.player.role },
+        });
+
+        if (granted) {
+          broadcastState();
+        }
+        return;
+      }
+
+      if (message.type === "publish_map_request") {
+        if (session.player.role !== "admin") {
+          send(session.socket, { type: "error", message: "Sem permissao para publicar mapas." });
+          return;
+        }
+
+        try {
+          const newMap = message.payload as CampusMapDefinition;
+          loadCampusMap(newMap);
+
+          const filePath = fileURLToPath(
+            new URL("../../../packages/game-core/src/campus.json", import.meta.url),
+          );
+          writeFileSync(filePath, JSON.stringify(newMap, null, 2), "utf8");
+
+          for (const clientSession of sessions.values()) {
+            send(clientSession.socket, { type: "map_update", map: newMap });
+          }
+        } catch (error) {
+          const err = error as Error;
+          send(session.socket, {
+            type: "error",
+            message: `Falha ao publicar mapa: ${err.message}`,
+          });
         }
         return;
       }
@@ -310,11 +477,55 @@ export function getLeasedInput(
   return now - lastInputAt <= INPUT_LEASE_MS ? input : createIdleInput(input.sequence);
 }
 
-function createHttpServer(): Server {
+function createHttpServer(sessions: Map<string, PlayerSession>): Server {
   return createServer((request, response) => {
+    // Add CORS headers for all requests
+    response.setHeader("Access-Control-Allow-Origin", "*");
+    response.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+    if (request.method === "OPTIONS") {
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+
     if (request.url === "/health") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ ok: true, service: "ig-campus-server" }));
+      return;
+    }
+
+    if (request.url === "/map" && request.method === "GET") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(CAMPUS_MAP));
+      return;
+    }
+
+    if (request.url === "/webhook" && request.method === "POST") {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+      request.on("end", () => {
+        try {
+          const payload = JSON.parse(body);
+          // Broadcast to all clients
+          const chatMsg = {
+            type: "chat_broadcast" as const,
+            sessionId: "system-webhook",
+            message: payload.message || "Evento recebido do Webhook!",
+          };
+          for (const session of sessions.values()) {
+            send(session.socket, chatMsg);
+          }
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify({ ok: true, broadcasted: true }));
+        } catch (e) {
+          response.writeHead(400, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "invalid_json" }));
+        }
+      });
       return;
     }
 
@@ -339,7 +550,7 @@ function listen(server: Server, port: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const handleError = (error: Error) => reject(error);
     server.once("error", handleError);
-    server.listen(port, "127.0.0.1", () => {
+    server.listen(port, "0.0.0.0", () => {
       server.off("error", handleError);
       resolve();
     });

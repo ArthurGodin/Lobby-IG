@@ -1,4 +1,5 @@
 import {
+  type AuthRequest,
   type AvatarAppearance,
   type ClientMessage,
   isPlayerColor,
@@ -6,6 +7,7 @@ import {
   MAX_INTERACTION_ID_LENGTH,
   MAX_INTERACTION_REQUEST_ID_LENGTH,
   type MovementInput,
+  sanitizeAdminKey,
 } from "@ig-campus/contracts";
 
 export function parseClientMessage(rawMessage: string): ClientMessage | null {
@@ -28,6 +30,52 @@ export function parseClientMessage(rawMessage: string): ClientMessage | null {
 
     if (parsed.type === "interact") {
       return parseInteraction(parsed.payload);
+    }
+
+    if (parsed.type === "auth") {
+      const auth = parseAuthRequest(parsed.payload);
+      return auth ? { type: "auth", payload: auth } : null;
+    }
+
+    if (parsed.type === "publish_map_request") {
+      return { type: "publish_map_request", payload: parsed.payload };
+    }
+
+    if (parsed.type === "chat_request" && typeof parsed.payload.message === "string") {
+      return { type: "chat_request", payload: { message: parsed.payload.message.slice(0, 120) } };
+    }
+
+    if (
+      parsed.type === "whiteboard_draw_request" &&
+      typeof parsed.payload.interactableId === "string" &&
+      typeof parsed.payload.x0 === "number" &&
+      typeof parsed.payload.y0 === "number" &&
+      typeof parsed.payload.x1 === "number" &&
+      typeof parsed.payload.y1 === "number" &&
+      typeof parsed.payload.color === "string" &&
+      typeof parsed.payload.width === "number"
+    ) {
+      return {
+        type: "whiteboard_draw_request",
+        payload: {
+          interactableId: parsed.payload.interactableId,
+          x0: parsed.payload.x0,
+          y0: parsed.payload.y0,
+          x1: parsed.payload.x1,
+          y1: parsed.payload.y1,
+          color: parsed.payload.color,
+          width: parsed.payload.width,
+        },
+      };
+    }
+
+    if (
+      parsed.type === "emoji_reaction_request" &&
+      typeof parsed.payload.emoji === "string" &&
+      parsed.payload.emoji.length > 0 &&
+      parsed.payload.emoji.length <= 8
+    ) {
+      return { type: "emoji_reaction_request", payload: { emoji: parsed.payload.emoji } };
     }
 
     return null;
@@ -53,6 +101,16 @@ function parseInteraction(value: Record<string, unknown>): ClientMessage | null 
       actionId: value.actionId,
     },
   };
+}
+
+function parseAuthRequest(value: Record<string, unknown>): AuthRequest | null {
+  const adminKey = sanitizeAdminKey(value.adminKey);
+
+  if (!adminKey) {
+    return null;
+  }
+
+  return { adminKey };
 }
 
 export function parseMovementInput(value: unknown): MovementInput | null {

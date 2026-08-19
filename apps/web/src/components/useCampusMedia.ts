@@ -41,7 +41,22 @@ export function useCampusMedia() {
 
     const controller = new CampusMediaController(setState, () => audioRootRef.current);
     controllerRef.current = controller;
-    await controller.connect(access);
+
+    // Fix LAN connections by dynamically rewriting localhost to the actual hostname
+    const dynamicAccess = { ...access };
+    if (dynamicAccess.available) {
+      try {
+        const url = new URL(dynamicAccess.serverUrl);
+        if (url.hostname === "127.0.0.1" || url.hostname === "localhost") {
+          url.hostname = window.location.hostname;
+          dynamicAccess.serverUrl = url.toString();
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    await controller.connect(dynamicAccess);
     controller.syncAcoustics(pendingAcousticRef.current);
     controller.syncScreenShare(pendingScreenShareRef.current);
     controller.syncSpatialPositions(

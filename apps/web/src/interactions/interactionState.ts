@@ -133,6 +133,12 @@ export function getInteractionResultMessage(result: InteractionResult): string {
       if (result.actionId === "stop_screen_share") {
         return `Compartilhamento encerrado em ${label}.`;
       }
+      if (result.actionId === "open_whiteboard") {
+        return `Quadro aberto em ${label}.`;
+      }
+      if (result.actionId === "close_whiteboard") {
+        return `Quadro fechado em ${label}.`;
+      }
       return `Foco ativado em ${label}.`;
     case "invalid_target":
       return "Este objeto não está mais disponível no mapa.";
@@ -157,6 +163,10 @@ export function getInteractionActionLabel(actionId: InteractionActionId): string
       return "Compartilhar tela";
     case "stop_screen_share":
       return "Encerrar apresentação";
+    case "open_whiteboard":
+      return "Desenhar no Quadro";
+    case "close_whiteboard":
+      return "Fechar Quadro";
     default:
       return "Sentar e focar";
   }

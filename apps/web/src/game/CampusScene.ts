@@ -8,6 +8,7 @@ import {
   ART_SCALE,
   CAMPUS_MAP,
   type CampusMapLayer,
+  type CampusTileId,
   CLOSE_PROXIMITY_RADIUS,
   INTERACTABLES,
   MAP_HEIGHT,
@@ -75,9 +76,122 @@ export class CampusScene extends Phaser.Scene {
   private highlightedInteractableId: string | null = null;
   private screenShare: ScreenShareSnapshot | null = null;
   private presentingSessionIds = new Set<string>();
+  private tilemapLayers: Record<string, Phaser.Tilemaps.TilemapLayer> = {};
+  private builderState: {
+    open: boolean;
+    layer: "ground" | "structures" | "decorations" | "zones" | "spawns" | "interactables";
+    tile: CampusTileId | null;
+    tool: "pencil" | "rect" | "fill";
+    showGrid: boolean;
+  } | null = null;
+  private builderPreviewSprite: Phaser.GameObjects.Sprite | null = null;
+  private builderGridGraphics: Phaser.GameObjects.Graphics | null = null;
+  private builderMetadataGraphics: Phaser.GameObjects.Graphics | null = null;
+  private isPainting = false;
+  private builderRectStart: { col: number; row: number } | null = null;
+  private metadataDragStart: { x: number; y: number } | null = null;
+  private metadataDragCurrent: { x: number; y: number } | null = null;
+  private speechBubbles = new Map<string, Phaser.GameObjects.Container>();
+
+  private draftMap: typeof CAMPUS_MAP | null = null;
+  private mapHistory: (typeof CAMPUS_MAP)[] = [];
+  private mapHistoryPointer = -1;
+
+  private uiMutationListener = () => {
+    this.initDraftMap(false);
+    this.pushHistoryState();
+  };
+
+  public get activeMap(): typeof CAMPUS_MAP {
+    return this.draftMap ?? CAMPUS_MAP;
+  }
+
+  public getDraftMap(): typeof CAMPUS_MAP | null {
+    return this.draftMap;
+  }
+
+  public initDraftMap(forceNew = false): void {
+    if (!forceNew) {
+      const saved = localStorage.getItem("campus_map_draft");
+      if (saved) {
+        try {
+          this.draftMap = JSON.parse(saved);
+          this.rebuildTilemaps();
+          this.drawBuilderMetadata();
+          if (this.mapHistory.length === 0) this.pushHistoryState();
+          return;
+        } catch (e) {
+          console.error("Failed to parse local draft map", e);
+        }
+      }
+    }
+    this.draftMap = JSON.parse(JSON.stringify(CAMPUS_MAP)); // deep clone
+    this.rebuildTilemaps();
+    this.drawBuilderMetadata();
+    this.pushHistoryState();
+  }
+
+  public pushHistoryState(): void {
+    if (!this.draftMap) return;
+    this.mapHistory = this.mapHistory.slice(0, this.mapHistoryPointer + 1);
+    this.mapHistory.push(JSON.parse(JSON.stringify(this.draftMap)));
+    if (this.mapHistory.length > 50) {
+      this.mapHistory.shift();
+    } else {
+      this.mapHistoryPointer++;
+    }
+  }
+
+  public undoDraft(): void {
+    if (this.mapHistoryPointer > 0) {
+      this.mapHistoryPointer--;
+      this.draftMap = JSON.parse(JSON.stringify(this.mapHistory[this.mapHistoryPointer]));
+      this.rebuildTilemaps();
+      this.drawBuilderMetadata();
+      localStorage.setItem("campus_map_draft", JSON.stringify(this.draftMap));
+      window.dispatchEvent(new CustomEvent("campus-metadata-changed"));
+    }
+  }
+
+  public redoDraft(): void {
+    if (this.mapHistoryPointer < this.mapHistory.length - 1) {
+      this.mapHistoryPointer++;
+      this.draftMap = JSON.parse(JSON.stringify(this.mapHistory[this.mapHistoryPointer]));
+      this.rebuildTilemaps();
+      this.drawBuilderMetadata();
+      localStorage.setItem("campus_map_draft", JSON.stringify(this.draftMap));
+      window.dispatchEvent(new CustomEvent("campus-metadata-changed"));
+    }
+  }
+
+  public discardDraftMap(): void {
+    this.draftMap = null;
+    localStorage.removeItem("campus_map_draft");
+    this.rebuildTilemaps();
+    this.drawBuilderMetadata();
+  }
+
+  public setDraftMap(draft: typeof CAMPUS_MAP | null): void {
+    this.draftMap = draft;
+    this.rebuildTilemaps();
+    this.drawBuilderMetadata();
+  }
+
+  private rebuildTilemaps(): void {
+    if (!this.ready) return;
+    for (const key in this.tilemapLayers) {
+      this.tilemapLayers[key]?.destroy();
+    }
+    this.tilemapLayers = {};
+    const layers = this.activeMap.layers;
+    this.createTilemapLayer("ground", layers.ground, 0);
+    this.createTilemapLayer("structures", layers.structures, 4);
+    this.createTilemapLayer("decorations", layers.decorations, 8);
+  }
 
   constructor(private readonly onReady?: (scene: CampusScene) => void) {
     super("CampusScene");
+    window.addEventListener("campus-draft-mutated-by-ui", this.uiMutationListener);
   }
 
   preload(): void {
@@ -126,10 +240,62 @@ export class CampusScene extends Phaser.Scene {
     this.focusDeskGraphics = this.add.graphics().setDepth(16);
     this.screenStationGraphics = this.add.graphics().setDepth(16);
 
+    this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
+      this.handleBuilderPointer(pointer);
+    });
+    this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+      this.handleBuilderPointer(pointer);
+    });
+    this.input.on("pointerup", (pointer: Phaser.Input.Pointer) => {
+      if (this.builderState?.open) {
+        if (this.isPainting) {
+          this.isPainting = false;
+          this.pushHistoryState();
+        }
+        if (this.builderRectStart) {
+          const col = Math.floor(pointer.worldX / 32);
+          const row = Math.floor(pointer.worldY / 32);
+          const minCol = Math.min(this.builderRectStart.col, col);
+          const maxCol = Math.max(this.builderRectStart.col, col);
+          const minRow = Math.min(this.builderRectStart.row, row);
+          const maxRow = Math.max(this.builderRectStart.row, row);
+          for (let c = minCol; c <= maxCol; c++) {
+            for (let r = minRow; r <= maxRow; r++) {
+              if (c >= 0 && c < this.activeMap.columns && r >= 0 && r < this.activeMap.rows) {
+                this.paintTile(c, r, this.builderState.layer, this.builderState.tile);
+              }
+            }
+          }
+          this.builderRectStart = null;
+          this.pushHistoryState();
+        }
+      }
+    });
+
+    this.input.keyboard?.on("keydown-Z", (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey) {
+        if (event.shiftKey) {
+          this.redoDraft();
+        } else {
+          this.undoDraft();
+        }
+      }
+    });
+    this.input.keyboard?.on("keydown-Y", (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey) {
+        this.redoDraft();
+      }
+    });
+
     this.scale.on(Phaser.Scale.Events.RESIZE, this.handleResize, this);
+
+    const onMetadataChange = () => this.drawBuilderMetadata();
+    window.addEventListener("campus-metadata-changed", onMetadataChange);
+
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.ready = false;
       this.scale.off(Phaser.Scale.Events.RESIZE, this.handleResize, this);
+      window.removeEventListener("campus-metadata-changed", onMetadataChange);
     });
 
     this.ready = true;
@@ -182,10 +348,23 @@ export class CampusScene extends Phaser.Scene {
     }
 
     this.positionPlayerLabels();
+    this.positionSpeechBubbles();
     this.drawProximityRings();
     this.drawFocusBarriers();
     this.drawFocusDesks();
     this.drawScreenStations();
+  }
+
+  private positionSpeechBubbles(): void {
+    for (const [sessionId, bubble] of this.speechBubbles.entries()) {
+      const display = this.players.get(sessionId);
+      if (display) {
+        bubble.setPosition(
+          display.container.x,
+          display.container.y - AVATAR_FRAME_HEIGHT * AVATAR_DISPLAY_SCALE - 24,
+        );
+      }
+    }
   }
 
   setSelfSessionId(sessionId: string | null): void {
@@ -239,6 +418,27 @@ export class CampusScene extends Phaser.Scene {
     }
   }
 
+  setBuilderState(state: {
+    open: boolean;
+    layer: "ground" | "structures" | "decorations" | "zones" | "spawns" | "interactables";
+    tile: CampusTileId | null;
+    tool: "pencil" | "rect" | "fill";
+    showGrid: boolean;
+  }): void {
+    // Cleanup state when changing tool or closing
+    if (!state.open || (this.builderState && this.builderState.tool !== state.tool)) {
+      this.isPainting = false;
+      this.builderRectStart = null;
+    }
+
+    this.builderState = state;
+    if (!state.open && this.builderPreviewSprite) {
+      this.builderPreviewSprite.setVisible(false);
+    }
+    this.drawBuilderGrid();
+    this.drawBuilderMetadata();
+  }
+
   syncPlayers(players: PlayerSnapshot[], proximity: ProximitySnapshot): void {
     if (!this.ready) {
       this.pendingSnapshot = { players, proximity };
@@ -274,7 +474,7 @@ export class CampusScene extends Phaser.Scene {
   }
 
   private drawCampus(): void {
-    const layers = CAMPUS_MAP.layers;
+    const layers = this.activeMap.layers;
     this.createTilemapLayer("ground", layers.ground, 0);
     this.createTilemapLayer("structures", layers.structures, 4);
     this.createTilemapLayer("decorations", layers.decorations, 8);
@@ -285,7 +485,7 @@ export class CampusScene extends Phaser.Scene {
       ? PIXEL_ASSETS.campusTiles.key
       : FALLBACK_TILESET_KEY;
 
-    const rows = toTileFrameRows(data);
+    const rows = toTileFrameRows(data, this.activeMap.columns, this.activeMap.rows);
     const tilemap = this.make.tilemap({
       data: rows,
       tileWidth: PIXEL_ASSETS.campusTiles.frameWidth,
@@ -308,6 +508,7 @@ export class CampusScene extends Phaser.Scene {
     }
 
     layer.setScale(ART_SCALE).setDepth(depth);
+    this.tilemapLayers[name] = layer as Phaser.Tilemaps.TilemapLayer;
   }
 
   private createPlayer(player: PlayerSnapshot): PlayerDisplay {
@@ -321,8 +522,8 @@ export class CampusScene extends Phaser.Scene {
       .circle(0, -AVATAR_FRAME_HEIGHT * AVATAR_DISPLAY_SCALE * 0.48, 5, 0xffffff, 0)
       .setStrokeStyle(2, 0xffffff, 0);
     const speakingHalo = this.add
-      .circle(0, -AVATAR_FRAME_HEIGHT * AVATAR_DISPLAY_SCALE * 0.5, 24, 0x5fe0a6, 0.08)
-      .setStrokeStyle(3, 0x35d391, 0.92)
+      .circle(0, -AVATAR_FRAME_HEIGHT * AVATAR_DISPLAY_SCALE * 0.5, 24, 0x34d399, 0.15)
+      .setStrokeStyle(3, 0x10b981, 0.95)
       .setVisible(false);
     const shadow = this.add.ellipse(0, -4, 26, 9, 0x132019, 0.28);
     const base = this.add
@@ -346,8 +547,8 @@ export class CampusScene extends Phaser.Scene {
     const label = this.add
       .text(0, -AVATAR_FRAME_HEIGHT * AVATAR_DISPLAY_SCALE - 8, player.name, {
         align: "center",
-        backgroundColor: "rgba(247,249,243,0.9)",
-        color: "#1f2c27",
+        backgroundColor: "rgba(15, 23, 42, 0.8)",
+        color: "#f8fafc",
         fixedWidth: 120,
         fontFamily: '"Aptos", "Segoe UI", sans-serif',
         fontSize: "12px",
@@ -534,21 +735,21 @@ export class CampusScene extends Phaser.Scene {
     display.label
       .setBackgroundColor(
         display.focusMode
-          ? "rgba(240,226,255,0.98)"
+          ? "rgba(88,28,135,0.85)"
           : isPresenting
-            ? "rgba(219,247,255,0.97)"
+            ? "rgba(12,74,110,0.85)"
             : isSpeaking
-              ? "rgba(218,248,229,0.96)"
-              : "rgba(247,249,243,0.9)",
+              ? "rgba(6,78,59,0.85)"
+              : "rgba(15,23,42,0.85)",
       )
       .setColor(
         display.focusMode
-          ? "#5a3d7e"
+          ? "#e9d5ff"
           : isPresenting
-            ? "#14536a"
+            ? "#bae6fd"
             : isSpeaking
-              ? "#155f43"
-              : "#1f2c27",
+              ? "#a7f3d0"
+              : "#f8fafc",
       );
     display.label.setVisible(!this.overviewEnabled);
     display.marker.setVisible(this.overviewEnabled);
@@ -576,6 +777,85 @@ export class CampusScene extends Phaser.Scene {
 
     display.container.setAlpha(0.66);
     display.marker.setStrokeStyle(1, 0xffffff, 0.9);
+  }
+
+  showSpeechBubble(sessionId: string, message: string): void {
+    const player = this.players.get(sessionId);
+    if (!player) {
+      return;
+    }
+
+    if (this.speechBubbles.has(sessionId)) {
+      const existing = this.speechBubbles.get(sessionId);
+      existing?.destroy();
+      this.speechBubbles.delete(sessionId);
+    }
+
+    const bubble = this.add.container(0, 0).setDepth(200);
+
+    const paddingX = 10;
+    const paddingY = 8;
+    const textObj = this.add.text(0, 0, message, {
+      fontFamily: "Inter, sans-serif",
+      fontSize: "12px",
+      color: "#18261f",
+      align: "center",
+      wordWrap: { width: 160, useAdvancedWrap: true },
+    });
+
+    textObj.setOrigin(0.5, 1);
+    const bgWidth = textObj.width + paddingX * 2;
+    const bgHeight = textObj.height + paddingY * 2;
+
+    const graphics = this.add.graphics();
+    graphics.fillStyle(0xffffff, 0.95);
+    graphics.fillRoundedRect(-bgWidth / 2, -bgHeight - 6, bgWidth, bgHeight, 6);
+    graphics.fillTriangle(-4, -6, 4, -6, 0, 0);
+
+    textObj.setPosition(0, -paddingY - 6);
+    bubble.add([graphics, textObj]);
+
+    this.speechBubbles.set(sessionId, bubble);
+
+    this.time.delayedCall(4000, () => {
+      this.tweens.add({
+        targets: bubble,
+        alpha: 0,
+        y: bubble.y - 10,
+        duration: 300,
+        onComplete: () => {
+          bubble.destroy();
+          if (this.speechBubbles.get(sessionId) === bubble) {
+            this.speechBubbles.delete(sessionId);
+          }
+        },
+      });
+    });
+  }
+
+  showEmojiReaction(sessionId: string, emoji: string): void {
+    const player = this.players.get(sessionId);
+    if (!player) {
+      return;
+    }
+
+    const emojiText = this.add.text(
+      player.container.x,
+      player.container.y - AVATAR_FRAME_HEIGHT * AVATAR_DISPLAY_SCALE - 32,
+      emoji,
+      { fontSize: "28px" },
+    );
+    emojiText.setOrigin(0.5, 1).setDepth(250);
+
+    this.tweens.add({
+      targets: emojiText,
+      y: emojiText.y - 48,
+      alpha: { from: 1, to: 0 },
+      scale: { from: 1, to: 1.5 },
+      duration: 1200,
+      ease: "Power2",
+      onComplete: () => emojiText.destroy(),
+    });
   }
 
   private applyCameraMode(): void {
@@ -765,12 +1045,343 @@ export class CampusScene extends Phaser.Scene {
 
     image.setFrame(this.getTextureFrame(textureKey, frame));
   }
+
+  private drawBuilderGrid(): void {
+    if (!this.builderGridGraphics) {
+      this.builderGridGraphics = this.add.graphics().setDepth(99);
+    }
+    const graphics = this.builderGridGraphics;
+    graphics.clear();
+
+    if (this.builderState?.open && this.builderState.showGrid) {
+      graphics.lineStyle(1, 0xffffff, 0.2);
+      const tileSize = 32; // ART_TILE_SIZE * ART_SCALE
+      for (let x = 0; x <= MAP_WIDTH; x += tileSize) {
+        graphics.moveTo(x, 0);
+        graphics.lineTo(x, MAP_HEIGHT);
+      }
+      for (let y = 0; y <= MAP_HEIGHT; y += tileSize) {
+        graphics.moveTo(0, y);
+        graphics.lineTo(MAP_WIDTH, y);
+      }
+      graphics.strokePath();
+    }
+  }
+
+  private drawBuilderMetadata(): void {
+    if (!this.builderMetadataGraphics) {
+      this.builderMetadataGraphics = this.add.graphics().setDepth(100);
+    }
+    const graphics = this.builderMetadataGraphics;
+    graphics.clear();
+
+    if (!this.builderState?.open) {
+      return;
+    }
+
+    const tileSize = 32;
+
+    if (this.builderState.layer === "zones") {
+      for (const zone of this.activeMap.zones) {
+        graphics.fillStyle(0x3b82f6, 0.4);
+        graphics.lineStyle(2, 0x60a5fa, 0.8);
+        graphics.fillRect(
+          zone.rect.x * tileSize,
+          zone.rect.y * tileSize,
+          zone.rect.width * tileSize,
+          zone.rect.height * tileSize,
+        );
+        graphics.strokeRect(
+          zone.rect.x * tileSize,
+          zone.rect.y * tileSize,
+          zone.rect.width * tileSize,
+          zone.rect.height * tileSize,
+        );
+      }
+    } else if (this.builderState.layer === "spawns") {
+      for (const spawn of this.activeMap.spawns) {
+        graphics.fillStyle(0x10b981, 0.6);
+        graphics.lineStyle(2, 0x34d399, 1);
+        graphics.fillCircle(
+          spawn.x * tileSize + tileSize / 2,
+          spawn.y * tileSize + tileSize / 2,
+          tileSize / 2,
+        );
+        graphics.strokeCircle(
+          spawn.x * tileSize + tileSize / 2,
+          spawn.y * tileSize + tileSize / 2,
+          tileSize / 2,
+        );
+      }
+    } else if (this.builderState.layer === "interactables") {
+      for (const int of this.activeMap.interactables) {
+        graphics.fillStyle(0xf59e0b, 0.5);
+        graphics.lineStyle(2, 0xfbbf24, 0.9);
+        graphics.fillCircle(
+          int.interactionPosition.x,
+          int.interactionPosition.y,
+          int.interactionRadius,
+        );
+        graphics.strokeCircle(
+          int.interactionPosition.x,
+          int.interactionPosition.y,
+          int.interactionRadius,
+        );
+      }
+    }
+
+    if (this.metadataDragStart && this.metadataDragCurrent) {
+      const startX = Math.min(this.metadataDragStart.x, this.metadataDragCurrent.x);
+      const startY = Math.min(this.metadataDragStart.y, this.metadataDragCurrent.y);
+      const width = Math.abs(this.metadataDragStart.x - this.metadataDragCurrent.x) + 1;
+      const height = Math.abs(this.metadataDragStart.y - this.metadataDragCurrent.y) + 1;
+
+      graphics.fillStyle(0xffffff, 0.3);
+      graphics.lineStyle(2, 0xffffff, 1);
+      graphics.fillRect(startX * tileSize, startY * tileSize, width * tileSize, height * tileSize);
+      graphics.strokeRect(
+        startX * tileSize,
+        startY * tileSize,
+        width * tileSize,
+        height * tileSize,
+      );
+    }
+  }
+
+  private handleBuilderPointer(pointer: Phaser.Input.Pointer): void {
+    if (!this.builderState?.open) {
+      return;
+    }
+
+    const x = pointer.worldX;
+    const y = pointer.worldY;
+    const tileSize = 32; // ART_TILE_SIZE * ART_SCALE
+    const col = Math.floor(x / tileSize);
+    const row = Math.floor(y / tileSize);
+    const snappedX = col * tileSize;
+    const snappedY = row * tileSize;
+
+    if (!this.builderPreviewSprite) {
+      this.builderPreviewSprite = this.add
+        .sprite(snappedX, snappedY, PIXEL_ASSETS.campusTiles.key)
+        .setOrigin(0, 0)
+        .setScale(ART_SCALE)
+        .setAlpha(0.6)
+        .setDepth(100);
+    }
+
+    this.builderPreviewSprite.setPosition(snappedX, snappedY);
+
+    if (["zones", "spawns", "interactables"].includes(this.builderState.layer)) {
+      this.builderPreviewSprite.setVisible(false);
+      this.handleMetadataPointer(pointer, col, row);
+      return;
+    }
+
+    this.builderPreviewSprite.setVisible(true);
+
+    if (this.builderState.tile) {
+      this.builderPreviewSprite.setFrame(TILE_FRAME_BY_ID[this.builderState.tile]);
+      this.builderPreviewSprite.setTint(0xffffff);
+    } else {
+      // Eraser preview (using empty tile frame and red tint)
+      this.builderPreviewSprite.setFrame(TILE_FRAME_BY_ID["empty"]);
+      this.builderPreviewSprite.setTint(0xff0000);
+    }
+
+    if (this.builderState.tool === "fill") {
+      if (pointer.isDown && !this.isPainting) {
+        this.floodFill(col, row, this.builderState.layer, this.builderState.tile);
+        this.isPainting = true;
+      }
+      return;
+    }
+
+    if (this.builderState.tool === "rect") {
+      if (pointer.isDown) {
+        if (!this.builderRectStart) {
+          this.builderRectStart = { col, row };
+        }
+        this.builderPreviewSprite.setVisible(false);
+        if (!this.builderMetadataGraphics) return;
+        this.builderMetadataGraphics.clear();
+        this.drawBuilderMetadata();
+
+        const minCol = Math.min(this.builderRectStart.col, col);
+        const maxCol = Math.max(this.builderRectStart.col, col);
+        const minRow = Math.min(this.builderRectStart.row, row);
+        const maxRow = Math.max(this.builderRectStart.row, row);
+
+        this.builderMetadataGraphics.fillStyle(0xffffff, 0.4);
+        this.builderMetadataGraphics.lineStyle(2, 0xffffff, 1);
+        this.builderMetadataGraphics.fillRect(
+          minCol * tileSize,
+          minRow * tileSize,
+          (maxCol - minCol + 1) * tileSize,
+          (maxRow - minRow + 1) * tileSize,
+        );
+        this.builderMetadataGraphics.strokeRect(
+          minCol * tileSize,
+          minRow * tileSize,
+          (maxCol - minCol + 1) * tileSize,
+          (maxRow - minRow + 1) * tileSize,
+        );
+      }
+      return;
+    }
+
+    if (pointer.isDown) {
+      if (col >= 0 && col < this.activeMap.columns && row >= 0 && row < this.activeMap.rows) {
+        this.paintTile(col, row, this.builderState.layer, this.builderState.tile);
+        this.isPainting = true;
+      }
+    }
+  }
+
+  private handleMetadataPointer(pointer: Phaser.Input.Pointer, col: number, row: number): void {
+    const tileSize = 32;
+    if (this.builderState?.layer === "zones" || this.builderState?.layer === "interactables") {
+      if (pointer.isDown) {
+        if (!this.metadataDragStart) {
+          this.metadataDragStart = { x: col, y: row };
+        }
+        this.metadataDragCurrent = { x: col, y: row };
+        this.drawBuilderMetadata();
+      } else if (!pointer.isDown && this.metadataDragStart) {
+        const startX = Math.min(this.metadataDragStart.x, col);
+        const startY = Math.min(this.metadataDragStart.y, row);
+        const width = Math.abs(this.metadataDragStart.x - col) + 1;
+        const height = Math.abs(this.metadataDragStart.y - row) + 1;
+
+        if (this.builderState.layer === "zones") {
+          const newZone = {
+            id: `zone-${Date.now()}`,
+            label: "Nova Zona",
+            acousticMode: "open",
+            rect: { x: startX, y: startY, width, height },
+          };
+          // biome-ignore lint/suspicious/noExplicitAny: Muting local draft map
+          (this.activeMap.zones as any[]).push(newZone);
+        } else if (this.builderState.layer === "interactables") {
+          const newInt = {
+            id: `int-${Date.now()}`,
+            kind: "focus_desk",
+            label: "Nova Interação",
+            interactionPosition: {
+              x: (startX + width / 2) * tileSize,
+              y: (startY + height / 2) * tileSize,
+            },
+            interactionRadius: (Math.max(width, height) * tileSize) / 2,
+            priority: 1,
+            seatPosition: {
+              x: (startX + width / 2) * tileSize,
+              y: (startY + height / 2) * tileSize,
+            },
+            exitPosition: {
+              x: (startX + width / 2) * tileSize,
+              y: (startY + height / 2 + 1) * tileSize,
+            },
+            facing: "down",
+          };
+          // biome-ignore lint/suspicious/noExplicitAny: Muting local draft map
+          (this.activeMap.interactables as any[]).push(newInt);
+        }
+
+        window.dispatchEvent(new CustomEvent("campus-metadata-changed"));
+        localStorage.setItem("campus_map_draft", JSON.stringify(this.draftMap));
+        this.pushHistoryState();
+        this.metadataDragStart = null;
+        this.metadataDragCurrent = null;
+        this.drawBuilderMetadata();
+      }
+    } else if (this.builderState?.layer === "spawns") {
+      if (pointer.isDown && !this.metadataDragStart) {
+        this.metadataDragStart = { x: col, y: row };
+      } else if (!pointer.isDown && this.metadataDragStart) {
+        // biome-ignore lint/suspicious/noExplicitAny: Muting local draft map
+        (this.activeMap.spawns as any[]).push({ x: col, y: row });
+        window.dispatchEvent(new CustomEvent("campus-metadata-changed"));
+        localStorage.setItem("campus_map_draft", JSON.stringify(this.draftMap));
+        this.pushHistoryState();
+        this.metadataDragStart = null;
+        this.drawBuilderMetadata();
+      }
+    }
+  }
+
+  private floodFill(
+    startCol: number,
+    startRow: number,
+    layerName: string,
+    newTile: CampusTileId | null,
+  ) {
+    if (
+      startCol < 0 ||
+      startCol >= this.activeMap.columns ||
+      startRow < 0 ||
+      startRow >= this.activeMap.rows
+    )
+      return;
+
+    const layerData = this.activeMap.layers[
+      layerName as keyof typeof this.activeMap.layers
+    ] as CampusTileId[];
+    if (!layerData) return;
+
+    const startIndex = startRow * this.activeMap.columns + startCol;
+    const targetTile = layerData[startIndex] || "empty";
+    const replacement = newTile || "empty";
+
+    if (targetTile === replacement) return;
+
+    const queue = [{ col: startCol, row: startRow }];
+    const visited = new Set<number>();
+
+    while (queue.length > 0) {
+      const item = queue.shift();
+      if (!item) continue;
+      const { col, row } = item;
+      const idx = row * this.activeMap.columns + col;
+
+      if (visited.has(idx)) continue;
+      visited.add(idx);
+
+      const currentTile = layerData[idx] || "empty";
+      if (currentTile === targetTile) {
+        this.paintTile(col, row, layerName, newTile);
+
+        if (col > 0) queue.push({ col: col - 1, row });
+        if (col < this.activeMap.columns - 1) queue.push({ col: col + 1, row });
+        if (row > 0) queue.push({ col, row: row - 1 });
+        if (row < this.activeMap.rows - 1) queue.push({ col, row: row + 1 });
+      }
+    }
+  }
+
+  private paintTile(col: number, row: number, layerName: string, tile: CampusTileId | null): void {
+    const tilemapLayer = this.tilemapLayers[layerName];
+    if (tilemapLayer) {
+      if (tile && tile !== "empty") {
+        const frameIndex = TILE_FRAME_BY_ID[tile];
+        tilemapLayer.putTileAt(frameIndex, col, row);
+      } else {
+        tilemapLayer.removeTileAt(col, row);
+      }
+
+      const layerData = this.activeMap.layers[
+        layerName as keyof typeof this.activeMap.layers
+      ] as CampusTileId[];
+      const index = row * this.activeMap.columns + col;
+      layerData[index] = tile ?? "empty";
+      localStorage.setItem("campus_map_draft", JSON.stringify(this.draftMap));
+    }
+  }
 }
 
-function toTileFrameRows(layer: CampusMapLayer): number[][] {
-  return Array.from({ length: CAMPUS_MAP.rows }, (_, row) =>
-    Array.from({ length: CAMPUS_MAP.columns }, (_, column) => {
-      const tileId = layer[row * CAMPUS_MAP.columns + column];
+function toTileFrameRows(layer: CampusMapLayer, columns: number, rows: number): number[][] {
+  return Array.from({ length: rows }, (_, row) =>
+    Array.from({ length: columns }, (_, column) => {
+      const tileId = layer[row * columns + column];
       return tileId ? TILE_FRAME_BY_ID[tileId] : -1;
     }),
   );
